@@ -198,7 +198,8 @@ openpi-system（无工具）     15 个系统型扩展（现状不变）
 
 ### 路径（2026-08-13 落地状态）
 
-1. **P1（已完成）**：静态描述压缩 -13%（commit 958a2a9，参数 schema 为不可压天花板）
+1. **P1（已完成）**：静态描述压缩 **-4.5%**（pi 实测 33,741→32,223 字符，
+   commit 958a2a9；提交信息中的 -13% 为笔误口径，已纠错。参数 schema 为不可压天花板）
 2. **P2（已落地）**：包重组以**加载组预设**形式落地——`/openpi-setup` 新增
    `extension_load_group`（all / core-runtime / core），切换时重写包 manifest 的
    `pi.extensions` 清单，`/reload` 生效（extensions/shared/setup-config.ts +
@@ -207,7 +208,8 @@ openpi-system（无工具）     15 个系统型扩展（现状不变）
 4. **第三方描述补丁（B 方案，已完成）**：context-mode / hermes-memory / pi-lens /
    web-access / mcp-adapter 五扩展 -16,970 字符 ≈ -4.2k tok；browser-native 与
    cc-safety-net / pi-cc-patch 按用户决策不补丁。全局实测见
-   docs/token-payload-report.md（40.6k → ~35.1k tok，整体 -13.5%）。
+   docs/token-payload-report.md（40.6k → ~36.0k tok，整体 -11.3%；真实会话
+   端到端 -10.5% ≈ -4,267 tok/轮）。
 
 ### 风险
 | 风险 | 缓解 |
