@@ -1,6 +1,12 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync, watch, type Stats } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  watch,
+  writeFileSync,
+  type Stats,
+} from "node:fs";
 import {
   link,
   mkdir,
@@ -12,6 +18,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
   SUBAGENT_ROLE_NAMES,
@@ -30,6 +37,81 @@ export const REASONING_LEVELS = [
 ] as const;
 
 export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
+
+/**
+ * Extension load groups (P2, token-lazyload plan). The OpenPI package
+ * manifest lists explicit extension entries; the setup command rewrites
+ * that list per group so users pick a load shape per task profile.
+ * - "all": everything (24 extensions) — the default, current behavior.
+ * - "core-runtime": system + setup + core + runtime (no ask-user/context-pivot).
+ * - "core": system + setup + core only — pure coding sessions.
+ * system + setup are always loaded: system extensions carry commands/UI,
+ * and setup is the canonical configuration entry point (/openpi-setup).
+ */
+export const EXTENSION_LOAD_GROUPS = ["all", "core-runtime", "core"] as const;
+
+export type ExtensionLoadGroup = (typeof EXTENSION_LOAD_GROUPS)[number];
+
+export const OPENPI_EXTENSION_GROUPS = {
+  system: [
+    "commit-task-sync",
+    "copy-all",
+    "cron",
+    "file-mutation-display",
+    "file-search",
+    "git-info",
+    "model-info",
+    "multi-signal-sync",
+    "post-edit",
+    "session-liveness",
+    "sessions",
+    "suggestions",
+    "turn-time",
+    "ui-customization",
+    "working-indicator",
+  ],
+  setup: ["setup"],
+  core: ["tasks", "goal", "plan-mode"],
+  runtime: ["subagents", "background-terminals", "workflows"],
+  utility: ["ask-user", "context-pivot"],
+} as const;
+
+/** Manifest entries for a load group, in a stable order. */
+export function extensionEntriesForGroup(
+  group: ExtensionLoadGroup,
+): readonly string[] {
+  const names = [
+    ...OPENPI_EXTENSION_GROUPS.system,
+    ...OPENPI_EXTENSION_GROUPS.setup,
+    ...OPENPI_EXTENSION_GROUPS.core,
+    ...(group === "core-runtime" || group === "all"
+      ? OPENPI_EXTENSION_GROUPS.runtime
+      : []),
+    ...(group === "all" ? OPENPI_EXTENSION_GROUPS.utility : []),
+  ];
+  return names.map((name) => `./extensions/${name}/index.ts`);
+}
+
+/**
+ * Rewrite only the `pi.extensions` list of the OpenPI package manifest for
+ * the given group. Every other manifest field is preserved (JSON
+ * round-trip). Returns the applied entry list.
+ */
+export function syncExtensionManifest(
+  group: ExtensionLoadGroup,
+  manifestPath = fileURLToPath(new URL("../../package.json", import.meta.url)),
+): readonly string[] {
+  const entries = extensionEntriesForGroup(group);
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const pi = (manifest.pi ?? {}) as Record<string, unknown>;
+  manifest.pi = { ...pi, extensions: [...entries] };
+  const rendered = JSON.stringify(manifest, null, 2) + "\n";
+  writeFileSync(manifestPath, rendered, "utf8");
+  return entries;
+}
 
 export const FOOTER_ITEMS = [
   "cwd",
@@ -154,6 +236,10 @@ export interface MyPiSetupConfig {
     /** Per-built-in-role assignments; missing roles inherit the parent model. */
     readonly roleModels: SubagentRoleModels;
   };
+  readonly extensions: {
+    /** Which OpenPI extension load group the package manifest exposes. */
+    readonly loadGroup: ExtensionLoadGroup;
+  };
 }
 
 export const DEFAULT_SETUP_CONFIG: MyPiSetupConfig = {
@@ -174,6 +260,7 @@ export const DEFAULT_SETUP_CONFIG: MyPiSetupConfig = {
   },
   postEdit: { command: "" },
   subagents: { roleModels: {} },
+  extensions: { loadGroup: "all" },
 };
 
 export const SETUP_CONFIG_PATH = join(getAgentDir(), "my-pi-setup.json");
@@ -204,6 +291,10 @@ const isFooterStyle = (value: unknown): value is FooterStyle =>
 
 const isFooterPreset = (value: unknown): value is FooterPreset =>
   typeof value === "string" && FOOTER_PRESETS.includes(value as FooterPreset);
+
+const isExtensionLoadGroup = (value: unknown): value is ExtensionLoadGroup =>
+  typeof value === "string" &&
+  EXTENSION_LOAD_GROUPS.includes(value as ExtensionLoadGroup);
 
 export function flattenFooterItems(lines: FooterLines): readonly FooterItem[] {
   const items: FooterItem[] = [];
@@ -428,6 +519,7 @@ export function parseSetupConfig(value: unknown): MyPiSetupConfig {
   const workflows = isRecord(value.workflows) ? value.workflows : {};
   const ui = isRecord(value.ui) ? value.ui : {};
   const subagents = isRecord(value.subagents) ? value.subagents : {};
+  const extensions = isRecord(value.extensions) ? value.extensions : {};
   const footer = parseUiFooter(ui);
   return {
     suggestions: {
@@ -469,6 +561,11 @@ export function parseSetupConfig(value: unknown): MyPiSetupConfig {
     },
     postEdit: { command: parsePostEditCommand(value.postEdit) },
     subagents: { roleModels: parseSubagentRoleModels(subagents.roleModels) },
+    extensions: {
+      loadGroup: isExtensionLoadGroup(extensions.loadGroup)
+        ? extensions.loadGroup
+        : "all",
+    },
   };
 }
 
@@ -948,6 +1045,7 @@ export function formatSetupConfig(
     `Subagent results: ${config.ui.subagentResultDisplay === "full" ? "full by default" : "compact preview (expand for full output)"}`,
     `Bash operations: ${config.ui.bashToolDisplay === "full" ? "expanded by default" : "folded preview (Ctrl+O expands all)"}`,
     `Write/Edit operations: ${config.ui.fileMutationDisplay === "full" ? "expanded by default" : "folded preview (Ctrl+O expands all)"}`,
+    `Extension load group: ${config.extensions.loadGroup} · ${extensionEntriesForGroup(config.extensions.loadGroup).length} extensions · /reload applies`,
     `Post-edit command: ${config.postEdit.command ? config.postEdit.command : "off"}`,
     `Agent role models (Subagents + Workflows): ${SUBAGENT_ROLE_NAMES.map((role) => `${role} ${config.subagents.roleModels[role] ? `${config.subagents.roleModels[role].provider}/${config.subagents.roleModels[role].model}` : "inherit"}`).join(" · ")}`,
     ...integrationLines,

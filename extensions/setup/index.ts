@@ -31,8 +31,10 @@ import {
   MAX_WORKFLOW_AGENT_CALLS,
   MAX_WORKFLOW_CONCURRENCY,
   POST_EDIT_COMMAND_MAX_CHARS,
+  EXTENSION_LOAD_GROUPS,
   REASONING_LEVELS,
   SETUP_CONFIG_CHANGED_CHANNEL,
+  syncExtensionManifest,
   type FooterLayoutItem,
   type FooterPreset,
   type FooterStyle,
@@ -108,7 +110,7 @@ export default function openPiSetup(pi: ExtensionAPI) {
     name: "configure_my_pi_setup",
     label: "Configure OpenPI",
     description:
-      "Apply a user-requested configuration change for this Pi setup: suggestions, workflow fan-out, UI/footer, result display, Post-edit, agent-role models (null clears a role). Preserve settings the user did not ask to change.",
+      "Apply a user-requested configuration change for this Pi setup: suggestions, workflow fan-out, UI/footer, result display, Post-edit, agent-role models (null clears a role), extension load group. Preserve settings the user did not ask to change.",
     parameters: Type.Object({
       suggestions_enabled: Type.Optional(
         Type.Boolean({
@@ -203,6 +205,12 @@ export default function openPiSetup(pi: ExtensionAPI) {
           maxLength: POST_EDIT_COMMAND_MAX_CHARS,
           description:
             "Shell command run after turns with Write/Edit (empty string disables).",
+        }),
+      ),
+      extension_load_group: Type.Optional(
+        StringEnum(EXTENSION_LOAD_GROUPS, {
+          description:
+            "Which OpenPI extension load group the package manifest exposes: all (24 extensions, default), core-runtime (no ask-user/context-pivot), core (system+setup+core only, pure coding). Requires /reload to activate.",
         }),
       ),
     }),
@@ -308,23 +316,36 @@ export default function openPiSetup(pi: ExtensionAPI) {
               (provider, modelId) => ctx.modelRegistry.find(provider, modelId),
             ),
           },
+          extensions: {
+            loadGroup:
+              params.extension_load_group ?? current.extensions.loadGroup,
+          },
         };
         return config;
       };
 
       // Patch the document as it is on disk now, not as it was when this call
       // started, and report any stored value that was normalized or migrated.
+      const previousGroup = loadSetupConfig().extensions.loadGroup;
       const { config, replaced } = await updateSetupConfig(buildConfig);
+      let manifestNote = "";
+      if (config.extensions.loadGroup !== previousGroup) {
+        const entries = syncExtensionManifest(config.extensions.loadGroup);
+        manifestNote = ` Package manifest updated to ${entries.length} extension entries — /reload to activate.`;
+      }
       pi.events.emit(SETUP_CONFIG_CHANGED_CHANNEL, config);
       const text = formatSetupConfig(config);
       const note =
         replaced.length > 0
           ? ` Normalized or migrated stored values: ${replaced.join(", ")}.`
           : "";
-      if (ctx.hasUI) ctx.ui.notify(`${text}${note}`, "info");
+      if (ctx.hasUI) ctx.ui.notify(`${text}${note}${manifestNote}`, "info");
       return {
         content: [
-          { type: "text", text: `Updated OpenPI setup. ${text}${note}` },
+          {
+            type: "text",
+            text: `Updated OpenPI setup. ${text}${note}${manifestNote}`,
+          },
         ],
         details: config,
       };
@@ -357,6 +378,8 @@ export default function openPiSetup(pi: ExtensionAPI) {
           currentConfiguration,
           "",
           "Footer tips: presets are powerline, powerline-mono, compact; style is plain/powerline/powerline-mono; custom layouts use ui_footer_lines (2D enum arrays with optional flex). Do not use ui_footer_items together with ui_footer_lines. Built-in Agent role models (explorer, implementer, reviewer, advisor) are shared by subagent_spawn and workflow agent_type; they inherit the parent unless assigned an available registry model, and clearing an assignment restores inheritance. Custom agent-type files still override built-in role definitions. Nerd Font only affects powerline separator glyphs. Changes apply immediately in the active TUI session. Intercom installation is handled only by the native setup confirmation; do not install packages or edit its config yourself.",
+          "",
+          "Extension load groups: all (24 extensions, default), core-runtime (drops ask-user/context-pivot), core (system+setup+core only). Switching groups rewrites the OpenPI package manifest's pi.extensions list and takes effect after /reload.",
           "",
           "Use configure_my_pi_setup to apply only the requested OpenPI-owned changes and preserve everything else. Interpret model names from the available Pi registry. Do not edit configuration files directly.",
         ]

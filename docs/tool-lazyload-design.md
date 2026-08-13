@@ -1,6 +1,8 @@
 # openpi 工具懒加载：分类分层与重新拆分组合设计
 
-> 状态：设计稿（2026-08-13，基于 v0.2.0-complete 源码 + 实测 token 数据）
+> 状态：设计稿 → 落地中（2026-08-13，基于 v0.2.0-complete 源码 + 实测 token 数据）
+> 决策：**P3（内核 deferred/setToolVisibility）永久废弃**（用户决策 2026-08-13）——
+> 工程以 openpi 侧/补丁侧可做为止；P1 已完成、P2 已落地为加载组预设，见 §6。
 > 背景：pi+openpi 静态载荷 40.6k tokens/轮（内核 6.3k + openpi 9.9k + 其他 12 扩展 24.4k），
 > 是 omp（18.2k）的 2.2 倍。行业先例（Claude Code deferred MCP schemas）已验证
 > "工具名常驻 + schema 按需"的懒加载模式。
@@ -181,7 +183,10 @@ openpi-system（无工具）     15 个系统型扩展（现状不变）
 - **操作工具**（wait/kill/stop…）：短描述（"管理运行中的 X"）+ 参数名列表，行为规则移入代码注释
 - **promptGuidelines 降级**：行为约束从"每轮注入"改为"结果/错误信息里动态提示"
 
-### 5.3 内核提案（终极形态，Claude Code 先例背书）
+### 5.3 内核提案（已废弃，2026-08-13 用户决策）
+
+> P3 永久废弃：deferred schema 与 setToolVisibility 依赖上游内核，用户决策不再推进。
+> 本节仅留作历史记录；工程收益以 §6 的 P1/P2 + 第三方描述补丁为终态。
 
 1. `ToolDefinition.deferred?: boolean`——deferred 工具只进索引（名+一行），schema 经 `describe_tool(name)` 拉取
 2. `setToolVisibility(names, visible)`——运行时工具显隐（状态驱动，openpi 的 L1 触发信号直连）
@@ -191,10 +196,18 @@ openpi-system（无工具）     15 个系统型扩展（现状不变）
 
 ## 6. 落地路径与风险
 
-### 路径
-1. **P1（openpi 侧，立即）**：描述分级 + 入口/操作拆分（-40~50%，9.9k→5-6k）
-2. **P2（openpi 侧，中）**：包重组（core/runtime/utility）+ 状态提示注入（无实体时向模型提示"可 spawn"而非全量操作工具）
-3. **P3（内核侧，需上游）**：deferred schema + setToolVisibility——全生态受益（其他 12 扩展 24.4k 同样可省）
+### 路径（2026-08-13 落地状态）
+
+1. **P1（已完成）**：静态描述压缩 -13%（commit 958a2a9，参数 schema 为不可压天花板）
+2. **P2（已落地）**：包重组以**加载组预设**形式落地——`/openpi-setup` 新增
+   `extension_load_group`（all / core-runtime / core），切换时重写包 manifest 的
+   `pi.extensions` 清单，`/reload` 生效（extensions/shared/setup-config.ts +
+   extensions/setup）。"状态提示注入"依赖内核工具显隐 → 随 P3 一并废弃。
+3. **P3（已废弃）**：deferred schema + setToolVisibility（用户决策 2026-08-13）
+4. **第三方描述补丁（B 方案，已完成）**：context-mode / hermes-memory / pi-lens /
+   web-access / mcp-adapter 五扩展 -16,970 字符 ≈ -4.2k tok；browser-native 与
+   cc-safety-net / pi-cc-patch 按用户决策不补丁。全局实测见
+   docs/token-payload-report.md（40.6k → ~35.1k tok，整体 -13.5%）。
 
 ### 风险
 | 风险 | 缓解 |

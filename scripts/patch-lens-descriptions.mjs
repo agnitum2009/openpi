@@ -20,11 +20,11 @@
  *
  * Usage: node scripts/patch-lens-descriptions.mjs [--check]
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
-const ROOT = join(process.env.HOME ?? '', '.pi/agent/npm/node_modules/pi-lens');
-const TARGETS = [join(ROOT, 'dist/index.js')];
+const ROOT = join(process.env.HOME ?? "", ".pi/agent/npm/node_modules/pi-lens");
+const TARGETS = [join(ROOT, "dist/index.js")];
 
 // Compressed descriptions — plain text only: no ${} placeholders, no backticks.
 const DESCRIPTIONS = {
@@ -123,29 +123,69 @@ const DESCRIPTIONS = {
 
 // ast_grep_dump: its factory takes the tool name as a variable (name: name),
 // so it needs a function anchor instead of a name anchor.
-const DUMP_DESCRIPTION = "Dump the tree-sitter AST for a source snippet using ast-grep CLI. Use when ast_grep_search finds no matches and you need exact node kinds/field names/nesting. Named nodes only by default; includeAnonymous=true adds punctuation/CST nodes.";
+const DUMP_DESCRIPTION =
+  "Dump the tree-sitter AST for a source snippet using ast-grep CLI. Use when ast_grep_search finds no matches and you need exact node kinds/field names/nesting. Named nodes only by default; includeAnonymous=true adds punctuation/CST nodes.";
 
 // pi_lens_activate_tools: its description is a template with a catalog
 // interpolation — compress the intro and the catalog summaries, keep ${catalog}.
-const ACTIVATE_INTRO = "Activate situational pi-lens tools that stay registered but inactive by default (keeps the default tool list lean). Call ONCE with the tools you need — they become callable starting the NEXT turn. Available:\n";
-const ACTIVATE_CATALOG_TAIL = '${catalog}';
+const ACTIVATE_INTRO =
+  "Activate situational pi-lens tools that stay registered but inactive by default (keeps the default tool list lean). Call ONCE with the tools you need — they become callable starting the NEXT turn. Available:\n";
+const ACTIVATE_CATALOG_TAIL = "${catalog}";
 
 // LAZY_TOOL_CATALOG summaries (shown in pi_lens_activate_tools's description).
 // froms = every historical variant (replay-safe across tightening passes).
 const CATALOG_REPLACEMENTS = [
-  { froms: ['AST-aware structural code search across ~40 languages (ast-grep patterns).'], to: 'AST structural code search (~40 languages).' },
-  { froms: ['AST-aware structural code rewrite/refactor (ast-grep patterns).'], to: 'AST structural code rewrite/refactor.' },
-  { froms: ['Syntax-only file/dir structure (symbols/imports/exports/members) via ast-grep outline \\u2014 no index/LSP.', 'Syntax-only file/dir structure (symbols/imports/exports/members), no index/LSP.'], to: 'Syntax-only file/dir structure (symbols/imports/exports/members).' },
-  { froms: ['Dump the tree-sitter AST for a source snippet to discover node kinds/field names.'], to: 'Dump tree-sitter AST of a snippet to discover node kinds/fields.' },
-  { froms: ['IDE-style LSP navigation: definition, references, implementation, rename, call hierarchy.'], to: 'LSP navigation: definition, references, implementation, rename, call hierarchy.' },
-  { froms: ['Record a disposition for a diagnostic: false-positive / suppress (inline ignore comment) / defer (this session) / flagged (to fix).', 'Disposition for a diagnostic: false-positive / suppress (inline ignore comment) / defer (session) / flagged (to fix).', 'Diagnostic disposition: false-positive / suppress (inline ignore comment) / defer (session) / flagged (to fix).'], to: 'Disposition: false-positive / suppress (inline ignore comment) / defer (session) / flagged (to fix).' },
+  {
+    froms: [
+      "AST-aware structural code search across ~40 languages (ast-grep patterns).",
+    ],
+    to: "AST structural code search (~40 languages).",
+  },
+  {
+    froms: ["AST-aware structural code rewrite/refactor (ast-grep patterns)."],
+    to: "AST structural code rewrite/refactor.",
+  },
+  {
+    froms: [
+      "Syntax-only file/dir structure (symbols/imports/exports/members) via ast-grep outline \\u2014 no index/LSP.",
+      "Syntax-only file/dir structure (symbols/imports/exports/members), no index/LSP.",
+    ],
+    to: "Syntax-only file/dir structure (symbols/imports/exports/members).",
+  },
+  {
+    froms: [
+      "Dump the tree-sitter AST for a source snippet to discover node kinds/field names.",
+    ],
+    to: "Dump tree-sitter AST of a snippet to discover node kinds/fields.",
+  },
+  {
+    froms: [
+      "IDE-style LSP navigation: definition, references, implementation, rename, call hierarchy.",
+    ],
+    to: "LSP navigation: definition, references, implementation, rename, call hierarchy.",
+  },
+  {
+    froms: [
+      "Record a disposition for a diagnostic: false-positive / suppress (inline ignore comment) / defer (this session) / flagged (to fix).",
+      "Disposition for a diagnostic: false-positive / suppress (inline ignore comment) / defer (session) / flagged (to fix).",
+      "Diagnostic disposition: false-positive / suppress (inline ignore comment) / defer (session) / flagged (to fix).",
+    ],
+    to: "Disposition: false-positive / suppress (inline ignore comment) / defer (session) / flagged (to fix).",
+  },
 ];
 
-const check = process.argv.includes('--check');
+const check = process.argv.includes("--check");
 
 function assertPlain(text, label) {
-  if (text.includes(String.fromCharCode(36) + '{') || text.includes(String.fromCharCode(96))) {
-    throw new Error('NEW description for ' + label + ' contains ${} or a backtick — keep it plain text.');
+  if (
+    text.includes(String.fromCharCode(36) + "{") ||
+    text.includes(String.fromCharCode(96))
+  ) {
+    throw new Error(
+      "NEW description for " +
+        label +
+        " contains ${} or a backtick — keep it plain text.",
+    );
   }
 }
 
@@ -154,7 +194,7 @@ function findStringEnd(source, quote, from, terminator) {
   for (;;) {
     const end = source.indexOf(quote, i);
     if (end < 0) return undefined;
-    if (source[end - 1] !== '\\' && source[end + 1] === terminator) return end;
+    if (source[end - 1] !== "\\" && source[end + 1] === terminator) return end;
     i = end + 1;
   }
 }
@@ -165,23 +205,24 @@ function findJsonStringEnd(source, from) {
     const end = source.indexOf('"', i);
     if (end < 0) return undefined;
     let bs = 0;
-    for (let k = end - 1; k >= from && source[k] === '\\'; k--) bs++;
-    if (bs % 2 === 0 && source[end + 1] === ',') return end;
+    for (let k = end - 1; k >= from && source[k] === "\\"; k--) bs++;
+    if (bs % 2 === 0 && source[end + 1] === ",") return end;
     i = end + 1;
   }
 }
 
 // First description inside a given factory function.
 function locateInFactory(source, factoryName) {
-  const fnAt = source.indexOf('function ' + factoryName);
+  const fnAt = source.indexOf("function " + factoryName);
   if (fnAt < 0) return undefined;
   const d = /description:\s*([\x60"'])/.exec(source.slice(fnAt, fnAt + 600));
   if (!d) return undefined;
   const quote = d[1];
   const start = fnAt + d.index + d[0].length;
-  const end = quote === '"'
-    ? findJsonStringEnd(source, start)
-    : findStringEnd(source, quote, start, ',');
+  const end =
+    quote === '"'
+      ? findJsonStringEnd(source, start)
+      : findStringEnd(source, quote, start, ",");
   if (end === undefined) return undefined;
   return { start, end, quote };
 }
@@ -190,7 +231,7 @@ function locateInFactory(source, factoryName) {
 // first description: within the next 400 chars. Tries later name occurrences
 // if the first one has no adjacent description.
 function locateTool(source, toolName) {
-  const re = new RegExp('name:\\s*"' + toolName + '"', 'g');
+  const re = new RegExp('name:\\s*"' + toolName + '"', "g");
   let m;
   while ((m = re.exec(source)) !== null) {
     const region = source.slice(m.index, m.index + 400);
@@ -198,9 +239,10 @@ function locateTool(source, toolName) {
     if (!d) continue;
     const quote = d[1];
     const start = m.index + d.index + d[0].length;
-    const end = quote === '"'
-      ? findJsonStringEnd(source, start)
-      : findStringEnd(source, quote, start, ',');
+    const end =
+      quote === '"'
+        ? findJsonStringEnd(source, start)
+        : findStringEnd(source, quote, start, ",");
     if (end === undefined) continue;
     return { start, end, quote };
   }
@@ -209,10 +251,16 @@ function locateTool(source, toolName) {
 
 function renderDescription(text, quote) {
   if (quote === '"') {
-    return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    return text
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, "\\n");
   }
   if (quote === "'") {
-    return text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
+    return text
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'")
+      .replace(/\n/g, "\\n");
   }
   return text; // template literal: plain text, backticks already rejected
 }
@@ -226,10 +274,11 @@ function unescapeJson(raw) {
 }
 
 try {
-  for (const [label, text] of Object.entries(DESCRIPTIONS)) assertPlain(text, label);
-  assertPlain(DUMP_DESCRIPTION, 'ast_grep_dump');
-  assertPlain(ACTIVATE_INTRO, 'pi_lens_activate_tools intro');
-  for (const r of CATALOG_REPLACEMENTS) assertPlain(r.to, 'catalog summary');
+  for (const [label, text] of Object.entries(DESCRIPTIONS))
+    assertPlain(text, label);
+  assertPlain(DUMP_DESCRIPTION, "ast_grep_dump");
+  assertPlain(ACTIVATE_INTRO, "pi_lens_activate_tools intro");
+  for (const r of CATALOG_REPLACEMENTS) assertPlain(r.to, "catalog summary");
 
   let allApplied = true;
   let anyLocated = false;
@@ -237,81 +286,155 @@ try {
 
   for (const target of TARGETS) {
     if (!existsSync(target)) {
-      console.error('Missing target file: ' + target);
+      console.error("Missing target file: " + target);
       allApplied = false;
       continue;
     }
-    const source = readFileSync(target, 'utf8');
-    const basename = target.split('/').pop();
+    const source = readFileSync(target, "utf8");
+    const basename = target.split("/").pop();
     anyLocated = true;
 
     // Catalog summary replacements (exact text; froms = historical variants).
-    const catStates = CATALOG_REPLACEMENTS.map((r) => ({ ...r, applied: source.includes(r.to) }));
+    const catStates = CATALOG_REPLACEMENTS.map((r) => ({
+      ...r,
+      applied: source.includes(r.to),
+    }));
     for (const r of catStates) if (!r.applied) allApplied = false;
-    const missingCat = catStates.find((r) => !r.applied && !r.froms.some((f) => source.includes(f)));
+    const missingCat = catStates.find(
+      (r) => !r.applied && !r.froms.some((f) => source.includes(f)),
+    );
     if (missingCat) {
-      console.error('[!] catalog summary not found: ' + missingCat.to.slice(0, 40) + ' — layout changed; re-derive manually.');
+      console.error(
+        "[!] catalog summary not found: " +
+          missingCat.to.slice(0, 40) +
+          " — layout changed; re-derive manually.",
+      );
       allApplied = false;
       continue;
     }
 
     // Template-block anchors (static tools + dump + activate).
-    const anchors = Object.entries(DESCRIPTIONS).map(([tool, text]) => ({ tool, text, found: locateTool(source, tool) }));
-    anchors.push({ tool: 'ast_grep_dump', text: DUMP_DESCRIPTION, found: locateInFactory(source, 'createAstDumpToolWithName') });
-    anchors.push({ tool: 'pi_lens_activate_tools', text: ACTIVATE_INTRO + ACTIVATE_CATALOG_TAIL, found: locateInFactory(source, 'createActivateToolsTool') });
+    const anchors = Object.entries(DESCRIPTIONS).map(([tool, text]) => ({
+      tool,
+      text,
+      found: locateTool(source, tool),
+    }));
+    anchors.push({
+      tool: "ast_grep_dump",
+      text: DUMP_DESCRIPTION,
+      found: locateInFactory(source, "createAstDumpToolWithName"),
+    });
+    anchors.push({
+      tool: "pi_lens_activate_tools",
+      text: ACTIVATE_INTRO + ACTIVATE_CATALOG_TAIL,
+      found: locateInFactory(source, "createActivateToolsTool"),
+    });
 
     const missing = anchors.filter((a) => !a.found);
     if (missing.length > 0) {
-      console.error('[!] not located: ' + missing.map((m) => m.tool).join(', ') + ' — layout changed; re-derive manually.');
+      console.error(
+        "[!] not located: " +
+          missing.map((m) => m.tool).join(", ") +
+          " — layout changed; re-derive manually.",
+      );
       allApplied = false;
       continue;
     }
 
-    const blocksApplied = anchors.every((a) => source.slice(a.found.start, a.found.end) === renderDescription(a.text, a.found.quote));
+    const blocksApplied = anchors.every(
+      (a) =>
+        source.slice(a.found.start, a.found.end) ===
+        renderDescription(a.text, a.found.quote),
+    );
     if (!blocksApplied) allApplied = false;
     if (blocksApplied && catStates.every((r) => r.applied)) continue;
 
-    const backupPath = target + '.bak-tool-descriptions';
-    if (!existsSync(backupPath)) writeFileSync(backupPath, source, 'utf8');
+    const backupPath = target + ".bak-tool-descriptions";
+    if (!existsSync(backupPath)) writeFileSync(backupPath, source, "utf8");
 
     // Single descending-position pass over ALL edits (anchors + text replaces).
     const edits = [];
     for (const { tool, found, text } of anchors) {
-      const before = found.quote === '"' ? unescapeJson(source.slice(found.start, found.end)).length : found.end - found.start;
-      edits.push({ label: tool, start: found.start, end: found.end, replacement: renderDescription(text, found.quote), before, after: text.length });
+      const before =
+        found.quote === '"'
+          ? unescapeJson(source.slice(found.start, found.end)).length
+          : found.end - found.start;
+      edits.push({
+        label: tool,
+        start: found.start,
+        end: found.end,
+        replacement: renderDescription(text, found.quote),
+        before,
+        after: text.length,
+      });
     }
     for (const r of catStates) {
       if (r.applied) continue;
       const from = r.froms.find((f) => source.includes(f));
       if (!from) continue;
       const at = source.indexOf(from);
-      if (at >= 0) edits.push({ label: 'catalog: ' + from.slice(0, 24), start: at, end: at + from.length, replacement: r.to, before: from.length, after: r.to.length });
+      if (at >= 0)
+        edits.push({
+          label: "catalog: " + from.slice(0, 24),
+          start: at,
+          end: at + from.length,
+          replacement: r.to,
+          before: from.length,
+          after: r.to.length,
+        });
     }
     edits.sort((a, b) => b.start - a.start);
     let next = source;
     for (const e of edits) {
       next = next.slice(0, e.start) + e.replacement + next.slice(e.end);
-      console.log('  [' + basename + '] ' + e.label.padEnd(26) + ' ' + String(e.before).padStart(5) + ' -> ' + String(e.after).padStart(5) + ' chars (-' + (e.before - e.after) + ', -' + Math.round(((e.before - e.after) / e.before) * 100) + '%)');
+      console.log(
+        "  [" +
+          basename +
+          "] " +
+          e.label.padEnd(26) +
+          " " +
+          String(e.before).padStart(5) +
+          " -> " +
+          String(e.after).padStart(5) +
+          " chars (-" +
+          (e.before - e.after) +
+          ", -" +
+          Math.round(((e.before - e.after) / e.before) * 100) +
+          "%)",
+      );
     }
-    writeFileSync(target, next, 'utf8');
+    writeFileSync(target, next, "utf8");
     changed = true;
   }
 
   if (!anyLocated) {
-    console.error('No pi-lens target files found — check the extension install path.');
+    console.error(
+      "No pi-lens target files found — check the extension install path.",
+    );
     process.exit(1);
   }
   if (check) {
-    if (allApplied) { console.log('Patch already applied ✓'); process.exit(0); }
-    console.error('Patch NOT applied — run: node scripts/patch-lens-descriptions.mjs');
+    if (allApplied) {
+      console.log("Patch already applied ✓");
+      process.exit(0);
+    }
+    console.error(
+      "Patch NOT applied — run: node scripts/patch-lens-descriptions.mjs",
+    );
     process.exit(1);
   }
   if (!allApplied && !changed) {
-    console.error('Some description blocks were not located — the extension layout changed; re-derive manually.');
+    console.error(
+      "Some description blocks were not located — the extension layout changed; re-derive manually.",
+    );
     process.exit(1);
   }
-  console.log('pi-lens descriptions patched ✓ (backup: dist/index.js.bak-tool-descriptions)');
+  console.log(
+    "pi-lens descriptions patched ✓ (backup: dist/index.js.bak-tool-descriptions)",
+  );
 } catch (error) {
-  console.error('Failed: ' + (error instanceof Error ? error.message : String(error)));
+  console.error(
+    "Failed: " + (error instanceof Error ? error.message : String(error)),
+  );
   process.exit(1);
 }
