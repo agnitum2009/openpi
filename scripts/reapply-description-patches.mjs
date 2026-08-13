@@ -37,5 +37,5 @@ for (const r of results) {
   }
 }
 const failed = results.filter((r) => !r.ok).length;
-console.log(failed === 0 ? '\\nAll description patches applied ✓' : '\\n' + failed + ' patch(es) failed — see output above');
+console.log(failed === 0 ? '\nAll description patches applied ✓' : '\n' + failed + ' patch(es) failed — see output above');
 process.exit(failed === 0 ? 0 : 1);
