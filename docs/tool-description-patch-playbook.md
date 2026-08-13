@@ -1,6 +1,7 @@
 # 第三方扩展工具描述补丁——运行手册
 
-> 状态：context-mode / pi-hermes-memory / pi-lens 已闭环（2026-08-13）
+> 状态：context-mode / pi-hermes-memory / pi-lens / pi-web-access 已闭环；
+> browser-native 跳过（用户决策，见下文）（2026-08-13）
 > 配套：`scripts/patch-context-mode-descriptions.mjs`（B 方案第一批）
 
 ## 目的
@@ -69,6 +70,35 @@ npm 包无法直接改源码（`pi update --all` 会重装覆盖），因此采�
 验证：进程内加载 14 工具全注册 ✓；pi_lens_activate_tools / symbol_search
 实际调用成功 ✓；--check 幂等 ✓（desc+params+snippet+guidelines 合计
 33,504 → 29,529 字符，-12%）。
+### pi-web-access（进程内 loader 探针实测，2026-08-13）
+
+| 工具 | 压缩前 | 压缩后 | 节省 |
+|---|---|---|---|
+| web_search | 1,595 | 1,004 | -37% |
+| fetch_content | 369 | 327 | -11% |
+| get_search_content | 120 | 98 | -18% |
+| source_check | 119 | 90 | -24% |
+| **合计（4 工具）** | **2,203** | **1,519** | **-31%** |
+
+验证：进程内加载 4 工具全注册 ✓；get_search_content 实际调用成功（结构化
+错误路径）✓；--check 幂等 ✓。snippet 另压 571 → 456（-20%）；
+desc+params+snippet+guidelines 合计 9,359 → 8,560 字符（-9%）。
+注意：目标 = index.ts（TS 源码包，进程内注册）。provider 全量名单在参数
+schema 枚举里，描述中的重复名单按"冗余列表"删除，但保留 array/all/
+显式选择语义、凭据要求（OpenAI/xAI）、auto-select 优先级规则与 SearXNG
+偏好。fetch_content / get_search_content 的描述含 ${...} 插值（存储注记与
+来源工具名动态拼接，随 toolNames 配置变化）——补丁只替换静态前缀、插值
+原样保留。
+
+### pi-agent-browser-native（跳过，2026-08-13，用户决策）
+
+实测（进程内 loader 探针）：agent_browser 单工具 desc 519 + params 9,724 +
+snippet 130 + guidelines 2,014 = 12,387 字符。参数 schema 占 78%——上游已刻意
+精简（params.js 注释 "Keep descriptions terse: Pi sends this schema every
+turn"；RUNTIME_PROMPT_GUIDELINES 注释 "keep small"）。对抗评估约束（参数
+schema、行为约束 guidelines 不可压）下可压空间 ≈3%，-30% 判据在本扩展结构上
+不可达 → 用户决策跳过，不补丁。若未来放宽约束可重开。
+
 注意：目标 = dist/index.js（pi 桥进程内注册面）。pi-lens 另有 MCP stdio
 入口 dist/mcp/server.js，是另一表面，未打补丁——lazy 工具的 description
 含运行时拼接（LAZY_TOOL_CATALOG + ${catalog}），补丁脚本对 catalog 摘要
@@ -94,6 +124,8 @@ node scripts/patch-hermes-memory-descriptions.mjs   # 重放（自动）
 node scripts/patch-hermes-memory-descriptions.mjs --check  # 确认
 node scripts/patch-lens-descriptions.mjs            # 重放（自动）
 node scripts/patch-lens-descriptions.mjs --check    # 确认
+node scripts/patch-web-access-descriptions.mjs       # 重放（自动）
+node scripts/patch-web-access-descriptions.mjs --check  # 确认
 ```
 
 ## 验证方法（不依赖 pi 时序）
