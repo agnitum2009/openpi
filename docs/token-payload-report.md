@@ -84,3 +84,19 @@
 - 剩余 openpi 侧手段 = **P2 包重组**（core/runtime/utility/system 加载组
   预设）：让用户按任务形态卸载 utility/runtime 组，纯编码会话可少载
   setup(4.1k)/workflows(6.3k)/subagents(7.6k) 等块。
+
+---
+
+## 3. 第三部分实测（core-runtime 组，2026-08-13 pi 复测）
+
+| 项 | 值 | 判定 |
+|---|---|---|
+| all 组（24 扩展） | 36,427 tok | 基线 |
+| **core-runtime 组（22 扩展）** | **35,209 tok** | 实测 |
+| **差值** | **-1,218 tok** | ✅ 命中预期（~1.2k） |
+| 归因 | ask-user + context-pivot 移除（描述 ~912 tok + 关联注入） | 量级一致 |
+
+测量方法：headless 调 configure_my_pi_setup（extension_load_group=core-runtime）→
+新 session 最简消息 → session JSONL usage → 恢复 all 组。环境已还原。
+
+**结论：懒加载工程三项收益全部实测落地——端到端收口。**
