@@ -73,12 +73,11 @@ export const WORKFLOW_PROMPT_SNIPPET =
 /** Guides the model on appropriate workflow fan-out and mandatory agent result checks. */
 export const WORKFLOW_PROMPT_GUIDELINES = [
   "Use workflow when a task needs several subagents with phase dependencies or dynamic fan-out; keep single small delegations in the main session.",
-  "For each workflow agent() call, select a matching agent_type when one exists (explorer, implementer, reviewer, advisor, or a loaded custom type) so its configured model, prompt, effort, and enforced tools apply; do not hardcode that role's model. Omit agent_type only for genuinely general-purpose work.",
-  "Default to pipeline() for multi-stage fan-out so each item advances as soon as its own previous stage lands; use parallel() only when a stage truly needs every prior result at once.",
-  "In workflow scripts, agent() never throws — check `.ok` before using `.output`/`.structured`; but parallel() and pipeline() settle a throwing thunk or stage to `null`, so guard those with `r && r.ok`.",
-  "A filtered-out or null result is a failed agent, not a clean pass: surface how many dropped (e.g. return a count) so a crashed or timed-out agent never reads as success.",
-  "log() anything the reader would want before the run ends — round counts, dropped agents, why a branch was skipped. A long run that narrates nothing is indistinguishable from a stalled one, and the return value only arrives at the end.",
-  "When several agents will edit files concurrently, give each one isolation: 'worktree' and tell it to commit; otherwise they share one checkout and one git index and overwrite each other. Read-only agents do not need it.",
+  "Per agent() call pick a matching agent_type (its model/effort/tools apply); omit only for general-purpose work.",
+  "Default to pipeline() for multi-stage fan-out; use parallel() only when a stage needs every prior result at once.",
+  "agent() never throws — check `.ok` before use; parallel()/pipeline() settle failures to null, so guard with `r && r.ok`. Surface dropped counts.",
+  "log() progress before the run ends — a long silent run is indistinguishable from a stalled one.",
+  "Concurrent file editors need isolation: 'worktree' + tell the child to commit; read-only agents do not need it.",
 ];
 
 /** Marks and forwards a workflow script's agent() task as an isolated child-model prompt. */

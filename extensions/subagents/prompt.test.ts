@@ -67,12 +67,12 @@ test("the spawn description tells the model when isolation is needed and what it
   const description = SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.isolation;
   // The model has to learn the hazard, not just the flag: without the "why",
   // it has no basis for choosing isolation on a concurrent write fan-out.
-  assert.match(description, /same git index|git index/);
+  assert.match(description, /share one checkout/);
   // Committing is what makes the work survive teardown.
   assert.match(description, /COMMIT/);
   // And the two costs it must weigh before turning it on.
   assert.match(description, /git repository/);
-  assert.match(description, /gitignored/);
+  assert.match(description, /starts clean/);
 });
 
 test("a planning child reports its effective tools without an agent type", () => {

@@ -36,11 +36,11 @@ export const ASK_USER_PROMPT_SNIPPET =
   "Ask 1-3 structured user questions with draft answers, final review, optional notes, and free-form answers";
 
 export const ASK_USER_PROMPT_GUIDELINES = [
-  "Use ask_user only for a genuine ambiguity or user preference that cannot be resolved from the code, docs, or conversation and would materially change the result. Never use it to ask whether to continue.",
-  'Before calling ask_user, analyze the choice: provide mutually exclusive options, put your recommendation first, suffix its label with "(Recommended)", and explain each option\'s impact or tradeoff.',
-  "Prefer one ask_user question. Include up to three only when the decisions are independent and batching them avoids unnecessary round trips.",
-  "For review findings that genuinely require user disposition, use one question per independent finding and batch at most three; do not ask about findings your instructions already authorize you to fix.",
-  "A blank free-form answer means the user wants the question rephrased or split. Do not treat it as consent, rejection, or an empty factual answer.",
+  "Use ask_user only for genuine ambiguity unresolvable from code/docs/conversation that materially changes the result; never to ask whether to continue.",
+  "Provide mutually exclusive options, recommendation first (label '(Recommended)'), and each option's impact or tradeoff.",
+  "Prefer one question; up to three only when independent and batching avoids round trips.",
+  "One question per independent review finding, max three; never ask about findings you are already authorized to fix.",
+  "A blank free-form answer means rephrase or split — never treat as consent, rejection, or an empty factual answer.",
 ];
 
 export function buildAskUserResultMessage(

@@ -75,9 +75,9 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
   workingDir:
     "Trusted working directory for the autonomous child (default: current working directory)",
   isolation:
-    'Set to "worktree" to run this child in its own git worktree on its own branch, branched from HEAD. Use it whenever children may edit the same files or stage changes concurrently — without it, parallel children share one checkout and one git index, so their edits and `git add`s overwrite each other. The child should COMMIT its work. A direct child can receive later subagent_send turns, so its checkout lives with that child Session. On retirement it is reclaimed only when a bounded inspection proves it empty; commits, dirty/untracked/ignored files, detached HEAD, timeout, or Git failure preserve it. Requires a git repository, and the checkout starts clean, so anything gitignored (build output, .env) will not be there.',
+    'Set to "worktree" to isolate a child in its own git worktree/branch (parallel editors otherwise share one checkout and overwrite each other). Child must COMMIT its work. Requires a git repository; the checkout starts clean.',
   model:
-    'Optional model override, as "provider/model-id" or a bare id resolved against the current provider. Precedence: explicit spawn model > selected type file model > configured built-in role model > parent model. Never guess a model name.',
+    'Optional model override as "provider/model-id" (or bare id). Never guess a model name.',
   reasoningEffort:
     "Optional thinking level for the child. Precedence: explicit spawn reasoning_effort > selected type default > parent reasoning effort.",
 };

@@ -41,10 +41,10 @@ export const BG_START_PROMPT_SNIPPET =
   "Run a long-lived shell command in the background (dev servers, builds, watchers); output is captured and you're notified on exit";
 
 export const BG_START_PROMPT_GUIDELINES = [
-  "Use bg_start for commands expected to run long or indefinitely (servers, watch modes, long builds); use the regular bash tool for quick commands.",
-  "bg_start processes receive no stdin — never start a command that requires interactive input.",
-  "After bg_start, keep working; the exit result arrives automatically. Use bg_status only when you need current output before continuing.",
-  "For finite background work (builds, tests, migrations), give bg_start a realistic timeout_seconds. Omit timeout_seconds for servers and watch modes that should run indefinitely.",
+  "Use bg_start for long-running/indefinite commands (servers, watch modes, long builds); use bash for quick commands.",
+  "bg_start receives no stdin — never start a command requiring interactive input.",
+  "After bg_start keep working; results arrive automatically; bg_status only when output is needed before continuing.",
+  "Give finite work a realistic timeout_seconds; omit for servers and watch modes.",
 ];
 
 export const BG_START_PARAMETER_DESCRIPTIONS = {

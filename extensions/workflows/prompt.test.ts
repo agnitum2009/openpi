@@ -194,10 +194,7 @@ test("the tool description teaches log() and usage() as distinct from phase()", 
     /explicit model\/provider\/effort overrides it/,
   );
   assert.match(WORKFLOW_TOOL_DESCRIPTION, /check `ok` before using the result/);
-  assert.match(
-    WORKFLOW_PROMPT_GUIDELINES.join("\n"),
-    /select a matching agent_type.*do not hardcode that role's model/,
-  );
+  assert.match(WORKFLOW_PROMPT_GUIDELINES.join("\n"), /matching agent_type/);
   // usage() reports; it does not enforce. Saying otherwise would invite a
   // script to rely on a limit that does not exist.
   assert.match(WORKFLOW_TOOL_DESCRIPTION, /total is a LOWER BOUND/);
