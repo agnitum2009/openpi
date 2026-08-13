@@ -3,7 +3,9 @@
 > 状态：context-mode / pi-hermes-memory / pi-lens / pi-web-access 已闭环；
 > browser-native 跳过（用户决策，见下文）。
 > pi 测试端验收（2026-08-13）：测试 1-5 全过——幂等+重放 ✓、toolCount 与
-> desc 合计精确一致（0 波动）、功能调用全过；真实 session 复核待用户重启 pi。
+> desc 合计精确一致（0 波动）、功能调用全过；测试 6（重启后真实 session）也过：
+> web_search 描述为压缩版（逐字确认）、memory_search / symbol_search /
+> get_search_content 会话内实调正常。B 方案全数闭环。
 > 配套：`scripts/patch-context-mode-descriptions.mjs`（B 方案第一批）
 
 ## 目的
