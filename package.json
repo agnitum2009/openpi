@@ -39,7 +39,30 @@
   },
   "pi": {
     "extensions": [
-      "./extensions"
+      "./extensions/commit-task-sync/index.ts",
+      "./extensions/copy-all/index.ts",
+      "./extensions/cron/index.ts",
+      "./extensions/file-mutation-display/index.ts",
+      "./extensions/file-search/index.ts",
+      "./extensions/git-info/index.ts",
+      "./extensions/model-info/index.ts",
+      "./extensions/multi-signal-sync/index.ts",
+      "./extensions/post-edit/index.ts",
+      "./extensions/session-liveness/index.ts",
+      "./extensions/sessions/index.ts",
+      "./extensions/suggestions/index.ts",
+      "./extensions/turn-time/index.ts",
+      "./extensions/ui-customization/index.ts",
+      "./extensions/working-indicator/index.ts",
+      "./extensions/setup/index.ts",
+      "./extensions/tasks/index.ts",
+      "./extensions/goal/index.ts",
+      "./extensions/plan-mode/index.ts",
+      "./extensions/subagents/index.ts",
+      "./extensions/background-terminals/index.ts",
+      "./extensions/workflows/index.ts",
+      "./extensions/ask-user/index.ts",
+      "./extensions/context-pivot/index.ts"
     ],
     "skills": [
       "./skills"

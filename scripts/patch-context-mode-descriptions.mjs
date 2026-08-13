@@ -28,8 +28,14 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-const ROOT = join(process.env.HOME ?? "", ".pi/agent/npm/node_modules/context-mode");
-const TARGETS = [join(ROOT, "server.bundle.mjs"), join(ROOT, "build/server.js")];
+const ROOT = join(
+  process.env.HOME ?? "",
+  ".pi/agent/npm/node_modules/context-mode",
+);
+const TARGETS = [
+  join(ROOT, "server.bundle.mjs"),
+  join(ROOT, "build/server.js"),
+];
 
 // ── Compressed descriptions (plain text only — no ${} placeholders) ────────
 const DESCRIPTIONS = {
@@ -174,7 +180,10 @@ function findDescription(source, tool) {
  * with escaped newlines (bundle) or raw template text (source). */
 function renderDescription(text, quote) {
   if (quote === "'") {
-    return text.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/\n/g, "\\n");
+    return text
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'")
+      .replace(/\n/g, "\\n");
   }
   // Template literal: escape bare backticks so the value does not close early.
   return text.replace(/`/g, "\\`");
@@ -189,11 +198,18 @@ try {
   for (const target of TARGETS) {
     if (!existsSync(target)) continue;
     const source = readFileSync(target, "utf8");
-    const located = toolNames.map((tool) => ({ tool, found: findDescription(source, tool) }));
+    const located = toolNames.map((tool) => ({
+      tool,
+      found: findDescription(source, tool),
+    }));
     const allFound = located.every((l) => l.found !== undefined);
-    const applied = allFound && located.every(
-      (l) => l.found.old === renderDescription(DESCRIPTIONS[l.tool], l.found.quote),
-    );
+    const applied =
+      allFound &&
+      located.every(
+        (l) =>
+          l.found.old ===
+          renderDescription(DESCRIPTIONS[l.tool], l.found.quote),
+      );
     anyLocated = true;
     if (!applied) allApplied = false;
     if (applied || !allFound) continue;
@@ -201,8 +217,13 @@ try {
     const backupPath = `${target}.bak-tool-descriptions`;
     if (!existsSync(backupPath)) writeFileSync(backupPath, source, "utf8");
     let next = source;
-    for (const { tool, found } of [...located].sort((a, b) => b.found.start - a.found.start)) {
-      next = next.slice(0, found.start) + renderDescription(DESCRIPTIONS[tool], found.quote) + next.slice(found.end);
+    for (const { tool, found } of [...located].sort(
+      (a, b) => b.found.start - a.found.start,
+    )) {
+      next =
+        next.slice(0, found.start) +
+        renderDescription(DESCRIPTIONS[tool], found.quote) +
+        next.slice(found.end);
     }
     writeFileSync(target, next, "utf8");
     changed = true;
@@ -216,7 +237,9 @@ try {
   }
 
   if (!anyLocated) {
-    console.error("No context-mode target files found — check the extension install path.");
+    console.error(
+      "No context-mode target files found — check the extension install path.",
+    );
     process.exit(1);
   }
   if (check) {
@@ -224,15 +247,23 @@ try {
       console.log("Patch already applied ✓");
       process.exit(0);
     }
-    console.error("Patch NOT applied — run: node scripts/patch-context-mode-descriptions.mjs");
+    console.error(
+      "Patch NOT applied — run: node scripts/patch-context-mode-descriptions.mjs",
+    );
     process.exit(1);
   }
   if (!allApplied && !changed) {
-    console.error("Some description blocks were not located — the extension layout changed; re-derive manually.");
+    console.error(
+      "Some description blocks were not located — the extension layout changed; re-derive manually.",
+    );
     process.exit(1);
   }
-  console.log("context-mode descriptions patched ✓ (backups: *.bak-tool-descriptions)");
+  console.log(
+    "context-mode descriptions patched ✓ (backups: *.bak-tool-descriptions)",
+  );
 } catch (error) {
-  console.error(`Failed: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(
+    `Failed: ${error instanceof Error ? error.message : String(error)}`,
+  );
   process.exit(1);
 }
