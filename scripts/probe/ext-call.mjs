@@ -39,6 +39,20 @@ if (errors.length) {
   process.exit(1);
 }
 const ext = extensions[0];
+// Fire session_start like the measure script does: extensions that defer
+// initialization to the first session (e.g. pi-mcp-adapter) get a chance to
+// initialize before the tool call.
+const stubCtx = { hasUI: false, mode: "main", cwd: process.cwd() };
+for (const h of ext?.handlers.get("session_start") ?? []) {
+  try {
+    await h({}, stubCtx);
+  } catch (err) {
+    console.error(
+      "[session_start note]",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
 const entry = ext?.tools.get(toolName);
 if (!entry) {
   console.error("tool not found:", toolName);
