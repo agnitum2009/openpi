@@ -3,6 +3,8 @@
 // 用法: [HOME=<temp>] node scripts/probe/ext-probe.mjs <extension-entry-path> [--text]
 // 输出: 每工具 desc/params/snippet/guidelines 字符数 + TOTALS + toolCount。
 // 注意: 写状态的扩展（hermes-memory/web-access）请给临时 HOME，避免动真实数据。
+// 建议用前缀赋值（HOME=<temp> node ...），避免 export 污染整个 shell。
+console.error('[probe] HOME=' + (process.env.HOME ?? '<unset>'));
 // 进程内扩展工具探针：用 pi 运行时 loader 直接加载扩展，捕获注册的工具定义。
 // 用法: HOME=<temp> node ext-probe.mjs <extension-entry-path> [--text]
 import { createExtensionRuntime, loadExtensions } from "/home/umax/.local/lib/node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js";
