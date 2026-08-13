@@ -1,6 +1,6 @@
 # 第三方扩展工具描述补丁——运行手册
 
-> 状态：context-mode 已闭环（2026-08-13）
+> 状态：context-mode 已闭环；pi-hermes-memory 已闭环（2026-08-13）
 > 配套：`scripts/patch-context-mode-descriptions.mjs`（B 方案第一批）
 
 ## 目的
@@ -27,6 +27,25 @@ npm 包无法直接改源码（`pi update --all` 会重装覆盖），因此采�
 参数 schema、env 变量名、TTL/缓存语义。
 **压缩**：Think-in-Code 哲学段落、ranking 原理说明、冗余 EXAMPLE。
 
+### pi-hermes-memory（进程内 loader 探针实测，2026-08-13）
+
+| 工具 | 压缩前 | 压缩后 | 节省 |
+|---|---|---|---|
+| skill_manage | 3,391 | 1,516 | -55% |
+| memory_replace | 1,631 | 1,334 | -18% |
+| memory_remove | 1,620 | 1,323 | -18% |
+| memory_add | 1,615 | 1,318 | -18% |
+| memory_search | 549 | 280 | -49% |
+| session_search | 492 | 319 | -35% |
+| **合计（6 工具）** | **9,298** | **6,090** | **-35%** |
+
+验证：进程内加载 6 工具全注册 ✓；memory_add / skill_manage / memory_search
+实际调用成功（沙箱 HOME，不碰真实数据）✓；--check 幂等 ✓。
+补充：desc+params+snippet+guidelines 合计 16,096 → 12,888 字符（-20%）。
+注意：hermes-memory 是 TS 源码包（pi.extensions → src/index.ts，jiti 进程内
+加载），无 MCP stdio 入口，故用运行时 loader 直载探针代替 MCP 握手
+（/tmp/token-bench/ext-probe.mjs + ext-call.mjs）。
+
 ## 运行
 
 ```bash
@@ -43,6 +62,8 @@ node scripts/patch-context-mode-descriptions.mjs --check
 pi update --all          # npm 包重装 → 补丁被冲掉
 node scripts/patch-context-mode-descriptions.mjs   # 重放（自动）
 node scripts/patch-context-mode-descriptions.mjs --check  # 确认
+node scripts/patch-hermes-memory-descriptions.mjs   # 重放（自动）
+node scripts/patch-hermes-memory-descriptions.mjs --check  # 确认
 ```
 
 ## 验证方法（不依赖 pi 时序）
