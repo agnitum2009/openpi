@@ -1,6 +1,6 @@
 # 第三方扩展工具描述补丁——运行手册
 
-> 状态：context-mode 已闭环；pi-hermes-memory 已闭环（2026-08-13）
+> 状态：context-mode / pi-hermes-memory / pi-lens 已闭环（2026-08-13）
 > 配套：`scripts/patch-context-mode-descriptions.mjs`（B 方案第一批）
 
 ## 目的
@@ -46,6 +46,34 @@ npm 包无法直接改源码（`pi update --all` 会重装覆盖），因此采�
 加载），无 MCP stdio 入口，故用运行时 loader 直载探针代替 MCP 握手
 （/tmp/token-bench/ext-probe.mjs + ext-call.mjs）。
 
+### pi-lens（进程内 loader 探针实测，2026-08-13）
+
+| 工具 | 压缩前 | 压缩后 | 节省 |
+|---|---|---|---|
+| lsp_navigation | 1,943 | 808 | -58% |
+| lens_diagnostics | 1,745 | 1,063 | -39% |
+| module_report | 1,463 | 979 | -33% |
+| project_report | 1,312 | 976 | -26% |
+| ast_grep_search | 983 | 735 | -25% |
+| lens_diagnostic_mark | 907 | 717 | -21% |
+| pi_lens_activate_tools | 901 | 723 | -20% |
+| read_symbol | 867 | 737 | -15% |
+| ast_grep_outline | 758 | 546 | -28% |
+| symbol_search | 673 | 511 | -24% |
+| ast_grep_replace | 567 | 459 | -19% |
+| read_enclosing | 317 | 252 | -21% |
+| ast_grep_dump | 251 | 237 | -6% |
+| lsp_diagnostics | 225 | 194 | -14% |
+| **合计（14 工具）** | **12,912** | **8,937** | **-31%** |
+
+验证：进程内加载 14 工具全注册 ✓；pi_lens_activate_tools / symbol_search
+实际调用成功 ✓；--check 幂等 ✓（desc+params+snippet+guidelines 合计
+33,504 → 29,529 字符，-12%）。
+注意：目标 = dist/index.js（pi 桥进程内注册面）。pi-lens 另有 MCP stdio
+入口 dist/mcp/server.js，是另一表面，未打补丁——lazy 工具的 description
+含运行时拼接（LAZY_TOOL_CATALOG + ${catalog}），补丁脚本对 catalog 摘要
+与静态 intro 分别处理，froms 多候选支持多轮收紧重放。
+
 ## 运行
 
 ```bash
@@ -64,6 +92,8 @@ node scripts/patch-context-mode-descriptions.mjs   # 重放（自动）
 node scripts/patch-context-mode-descriptions.mjs --check  # 确认
 node scripts/patch-hermes-memory-descriptions.mjs   # 重放（自动）
 node scripts/patch-hermes-memory-descriptions.mjs --check  # 确认
+node scripts/patch-lens-descriptions.mjs            # 重放（自动）
+node scripts/patch-lens-descriptions.mjs --check    # 确认
 ```
 
 ## 验证方法（不依赖 pi 时序）
