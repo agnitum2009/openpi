@@ -1,7 +1,7 @@
 # 第三方扩展工具描述补丁——运行手册
 
-> 状态：context-mode / pi-hermes-memory / pi-lens / pi-web-access 已闭环；
-> browser-native 跳过（用户决策，见下文）。
+> 状态：context-mode / pi-hermes-memory / pi-lens / pi-web-access /
+> pi-mcp-adapter 已闭环；browser-native 跳过（用户决策，见下文）。
 > pi 测试端验收（2026-08-13）：测试 1-5 全过——幂等+重放 ✓、toolCount 与
 > desc 合计精确一致（0 波动）、功能调用全过；测试 6（重启后真实 session）也过：
 > web_search 描述为压缩版（逐字确认）、memory_search / symbol_search /
@@ -94,6 +94,23 @@ schema 枚举里，描述中的重复名单按"冗余列表"删除，但保留 a
 来源工具名动态拼接，随 toolNames 配置变化）——补丁只替换静态前缀、插值
 原样保留。
 
+### pi-mcp-adapter（进程内 loader 探针实测，2026-08-13）
+
+| 工具 | 压缩前 | 压缩后 | 节省 |
+|---|---|---|---|
+| mcp | 1,478 | 1,144 | -23% |
+| mcpScript | 804 | 628 | -22% |
+| **合计（2 工具）** | **2,282** | **1,772** | **-22%** |
+
+验证：进程内加载 2 工具全注册 ✓；mcp / mcpScript 探针 execute 路径返回
+结构化响应 ✓（裸 loader 无 session 钩子 → not_initialized 为预期；
+真实会话内 mcp({}) 状态/搜索为权威功能验证，待 pi 会话复核）；
+--check 幂等 ✓。静态部分 mcp 1,193 → 859（-28%）——动态的
+server/instructions 摘要是配置驱动，不可压。
+注意：mcp 的 description 是运行时拼接（buildProxyDescription：静态前缀 +
+Usage 块 + 配置动态段），补丁只压静态段；mcpScript 描述含
+tools.search/describe/call 返回形状契约，全部保留。
+
 ### pi-agent-browser-native（跳过，2026-08-13，用户决策）
 
 实测（进程内 loader 探针）：agent_browser 单工具 desc 519 + params 9,724 +
@@ -130,6 +147,11 @@ node scripts/patch-lens-descriptions.mjs            # 重放（自动）
 node scripts/patch-lens-descriptions.mjs --check    # 确认
 node scripts/patch-web-access-descriptions.mjs       # 重放（自动）
 node scripts/patch-web-access-descriptions.mjs --check  # 确认
+node scripts/patch-mcp-adapter-descriptions.mjs         # 重放（自动）
+node scripts/patch-mcp-adapter-descriptions.mjs --check # 确认
+
+# 或一键全量重放（全部补丁 apply + --check，末尾汇总）：
+node scripts/reapply-description-patches.mjs
 ```
 
 ## 验证方法（不依赖 pi 时序）
