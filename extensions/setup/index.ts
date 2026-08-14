@@ -5,11 +5,12 @@ import type {
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import {
-  SUBAGENT_ROLE_NAMES,
-  type SubagentRoleModel,
-  type SubagentRoleModels,
-} from "../shared/subagent-roles.ts";
-import { sanitizeTerminalText } from "../shared/terminal-text.ts";
+  SUBAGENT_ROLE_MODELS_SCHEMA,
+  applySubagentRoleModelUpdates,
+  buildInteractiveSetupPrompt,
+  safeSetupNotice,
+  shouldOfferPiIntercom,
+} from "./domain.ts";
 import {
   formatPiIntercomStatus,
   inspectPiIntercom,
@@ -30,142 +31,15 @@ import {
   MAX_WORKFLOW_AGENT_CALLS,
   MAX_WORKFLOW_CONCURRENCY,
   POST_EDIT_COMMAND_MAX_CHARS,
+  EXTENSION_LOAD_GROUPS,
   REASONING_LEVELS,
   SETUP_CONFIG_CHANGED_CHANNEL,
+  syncExtensionManifest,
   type FooterLayoutItem,
   type FooterPreset,
   type FooterStyle,
   type MyPiSetupConfig,
 } from "../shared/setup-config.ts";
-
-const subagentRoleModelValueSchema = Type.Union([
-  Type.Object(
-    {
-      provider: Type.String({ description: "Available Pi provider id." }),
-      model: Type.String({ description: "Available Pi model id." }),
-    },
-    { additionalProperties: false },
-  ),
-  Type.Null(),
-]);
-
-export const SUBAGENT_ROLE_MODELS_SCHEMA = Type.Partial(
-  Type.Record(
-    Type.Union(SUBAGENT_ROLE_NAMES.map((role) => Type.Literal(role))),
-    subagentRoleModelValueSchema,
-  ),
-  {
-    additionalProperties: false,
-    description:
-      "Partial built-in-role model assignments shared by subagent_spawn and workflow agent_type. Each value is an available {provider, model}; null clears that role to inherit the parent model, and omitted roles are preserved.",
-  },
-);
-
-export function applySubagentRoleModelUpdates(
-  current: SubagentRoleModels,
-  updates:
-    | Partial<
-        Record<(typeof SUBAGENT_ROLE_NAMES)[number], SubagentRoleModel | null>
-      >
-    | undefined,
-  findModel: (
-    provider: string,
-    model: string,
-  ) => { readonly provider: string; readonly id: string } | undefined,
-) {
-  if (!updates) return current;
-
-  const roleModels = { ...current };
-  for (const role of SUBAGENT_ROLE_NAMES) {
-    const update = updates[role];
-    if (update === undefined) continue;
-    if (update === null) {
-      delete roleModels[role];
-      continue;
-    }
-    const resolved = findModel(update.provider, update.model);
-    if (!resolved) {
-      throw new Error(
-        `Unknown configured subagent role model for ${role}: ${update.provider}/${update.model}`,
-      );
-    }
-    roleModels[role] = { provider: resolved.provider, model: resolved.id };
-  }
-  return roleModels;
-}
-
-export function buildInteractiveSetupPrompt(options: {
-  currentConfiguration: string;
-  currentModel: string;
-  currentThinking: string;
-  savedConfigExists: boolean;
-}) {
-  const configurationState = options.savedConfigExists
-    ? [
-        "This package has already been configured. Explain the current settings in the user's language, then ask whether they want to keep them or change Next-action suggestions, Workflow limits, UI/Footer, result detail display, Post-edit, Agent role models, or review everything.",
-        "If the user keeps the current settings, do not call configure_my_pi_setup. If they choose a category, ask only the follow-up needed for that category.",
-      ]
-    : [
-        "This is the first setup. Explain the available choices and their impact in the user's language, then collect the initial preferences.",
-        "Prefer one ask_user call with up to three independent questions covering Next-action suggestions, Workflow limits, and UI/Footer/result display. Explain that Post-edit defaults off; keep it off unless the user opts in, then ask only for the command. Explain that built-in Agent roles used by subagent_spawn and workflow agent_type inherit the parent model unless the user assigns an available model to a role.",
-      ];
-
-  return [
-    "Guide me through configuring the installed OpenPI package interactively.",
-    "",
-    "Current configuration:",
-    options.currentConfiguration,
-    `Current Pi model: ${options.currentModel}`,
-    `Current Pi thinking level: ${options.currentThinking}`,
-    `Saved configuration exists: ${options.savedConfigExists ? "yes" : "no"}`,
-    "",
-    ...configurationState,
-    "",
-    "Before asking, briefly explain what can be configured and the practical impact:",
-    "- Next-action suggestions: disabled, or model-generated after a fully settled main-agent run. A suggestion appears as dim inline text on the first row of an empty editor; reserved cells at the row end keep CJK IME preedit from overwriting it. Right accepts it without submitting, and any other editor input dismisses it. Enabling requires an available provider/model and reasoning level and adds one small model call per settled run.",
-    "- Workflow fan-out: concurrency controls simultaneous agents and resource pressure; max agent calls controls the total capacity of one workflow. Valid ranges are 1-64 and 1-1024.",
-    "- UI: the large header costs vertical space; the custom footer is a declarative dashboard. Presets: powerline (default one-line ANSI256 blocks), powerline-mono (one-line high-contrast gray powerline), and compact (one-line plain text). Style can also be set independently: plain, powerline, powerline-mono. Custom lines are a 2D layout of cwd/model/thinking/context/cache/cost/throughput/git/pr plus at most one flex per line for left/right alignment. Nerd Font only affects powerline separator glyphs; text stays readable without it. Changes apply immediately in the active TUI session.",
-    "- Operational activity for Subagents, Workflows, and background terminals is core status and always remains visible whenever the custom footer is enabled.",
-    "- Post-edit command: one optional shell command (maximum 500 characters) run in the background after a turn with successful Write/Edit operations (e.g. `npm run format`). Off by default, interactive TUI sessions only, failures surface as a notification. This is a single command, not an event-hook system.",
-    "- Result detail display: Subagent results, Bash operations, and Write/Edit operations can each default to full (always expanded) or compact (Claude Code-style folded preview with a hidden-line count). Compact output can still be temporarily expanded with the configured app.tools.expand key (Ctrl+O by default). Bash and Write/Edit default to compact. Recommend compact for users who do not usually inspect implementation details.",
-    "- Agent role models: built-in explorer, implementer, reviewer, and advisor roles are shared by subagent_spawn and workflow agent_type, and inherit the parent model by default. Assign only an available registry model to an individual role when needed; clearing that role returns it to inheritance. Custom agent-type files still override a built-in role's complete definition.",
-    "- Intercom: optional cross-session messaging is installed only after a native setup confirmation. It stays parent-only; Direct/Workflow children and Replay cannot use it. The status above is informational for this model-guided step—do not install packages or edit its config yourself.",
-    "",
-    "Natural-language configuration examples the user might ask for:",
-    '- "switch footer to powerline" → ui_footer_preset=powerline',
-    '- "use mono powerline" → ui_footer_preset=powerline-mono',
-    '- "compact footer" → ui_footer_preset=compact',
-    '- "two custom lines: cwd flex model / context cost flex git" → ui_footer_lines=[["cwd","flex","model"],["context","cost","flex","git"]]',
-    '- "run npm run format after Write/Edit turns" → post_edit_command="npm run format"',
-    '- "turn off post-edit" → post_edit_command=""',
-    '- "make explorer use my available fast model" → subagent_role_models={explorer:{provider:"…",model:"…"}}',
-    '- "make explorer inherit again" → subagent_role_models={explorer:null}',
-    "",
-    "Use ask_user for the decision instead of merely printing instructions. Put the recommended choice first. Do not change configuration until the choices are clear. Then call configure_my_pi_setup at most once with the final requested changes, preserving everything else. Do not edit configuration files directly.",
-  ];
-}
-
-const safeSetupNotice = (value: unknown, maximum = 500) =>
-  sanitizeTerminalText(value instanceof Error ? value.message : String(value))
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, maximum);
-
-export function shouldOfferPiIntercom(options: {
-  readonly request: string;
-  readonly status: PiIntercomStatus;
-  readonly mode: ExtensionCommandContext["mode"];
-  readonly idle: boolean;
-}) {
-  return (
-    !options.request &&
-    !options.status.active &&
-    !options.status.installed &&
-    !options.status.diagnostic &&
-    options.mode === "tui" &&
-    options.idle
-  );
-}
 
 async function maybeOfferPiIntercom(
   ctx: ExtensionCommandContext,
@@ -236,12 +110,11 @@ export default function openPiSetup(pi: ExtensionAPI) {
     name: "configure_my_pi_setup",
     label: "Configure OpenPI",
     description:
-      "Apply a user-requested configuration change for this Pi setup. Configures next-action suggestions, workflow fan-out, UI/Footer (presets, style, multi-line layout), result detail display, optional Post-edit, and built-in Agent-role model assignments shared by subagent_spawn and workflow agent_type. Role models must be available in the Pi registry; null clears a role back to parent-model inheritance. Footer examples: powerline preset, powerline-mono, compact, or custom ui_footer_lines with flex. Preserve current values for settings the user did not ask to change. Changes apply immediately to an active TUI footer.",
+      "Apply a user-requested configuration change for this Pi setup: suggestions, workflow fan-out, UI/footer, result display, Post-edit, agent-role models (null clears a role), extension load group. Preserve settings the user did not ask to change.",
     parameters: Type.Object({
       suggestions_enabled: Type.Optional(
         Type.Boolean({
-          description:
-            "Whether model-generated next-action ghost suggestions are enabled. Omit to preserve the current value.",
+          description: "Whether next-action ghost suggestions are enabled.",
         }),
       ),
       suggestion_provider: Type.Optional(
@@ -259,8 +132,7 @@ export default function openPiSetup(pi: ExtensionAPI) {
         Type.Integer({
           minimum: 1,
           maximum: MAX_WORKFLOW_CONCURRENCY,
-          description:
-            "Maximum simultaneously running agents in each workflow (default 8, hard maximum 64). Omit to preserve the current value.",
+          description: "Max concurrent workflow agents (default 8, hard 64).",
         }),
       ),
       workflow_max_agent_calls: Type.Optional(
@@ -268,31 +140,29 @@ export default function openPiSetup(pi: ExtensionAPI) {
           minimum: 1,
           maximum: MAX_WORKFLOW_AGENT_CALLS,
           description:
-            "Maximum total agent() calls in each workflow (default 128, hard maximum 1024). Omit to preserve the current value.",
+            "Max agent() calls per workflow (default 128, hard 1024).",
         }),
       ),
       ui_show_header: Type.Optional(
         Type.Boolean({
-          description:
-            "Whether to show the large decorative Pi header. Defaults to false; omit to preserve the current value.",
+          description: "Show the decorative Pi header (default false).",
         }),
       ),
       ui_custom_footer: Type.Optional(
         Type.Boolean({
           description:
-            "Whether to replace Pi's footer with the package dashboard footer. Defaults to true; omit to preserve the current value.",
+            "Replace Pi's footer with the package dashboard footer (default true).",
         }),
       ),
       ui_footer_preset: Type.Optional(
         StringEnum(FOOTER_PRESETS, {
           description:
-            "Convenient footer preset applied first: powerline (one-line ANSI256 blocks), powerline-mono (one-line gray powerline), compact (one-line plain text). Style/lines overrides still win after the preset. Omit to preserve the current layout unless other footer fields are set.",
+            "Footer preset applied first; style/lines overrides win after it.",
         }),
       ),
       ui_footer_style: Type.Optional(
         StringEnum(FOOTER_STYLES, {
-          description:
-            "Footer visual style: plain (Pi theme separators), powerline (ANSI256 colored blocks with  seams), powerline-mono (high-contrast gray powerline). Nerd Font improves separator glyphs only. Omit to preserve the current style (or the preset's style when a preset is applied).",
+          description: "Footer visual style (plain/powerline/powerline-mono).",
         }),
       ),
       ui_footer_lines: Type.Optional(
@@ -301,7 +171,7 @@ export default function openPiSetup(pi: ExtensionAPI) {
           {
             minItems: 1,
             description:
-              "Declarative multi-line footer layout. Each row is an ordered list of metrics (cwd, model, thinking, context, cache, cost, throughput, git, pr) plus at most one flex for left/right alignment. Unknown/duplicate metrics are dropped; empty result falls back to the default. Cannot be combined with ui_footer_items.",
+              "Multi-line footer layout: rows of metrics (cwd/model/thinking/context/cache/cost/throughput/git/pr/flex). Mutually exclusive with ui_footer_items.",
           },
         ),
       ),
@@ -310,25 +180,23 @@ export default function openPiSetup(pi: ExtensionAPI) {
           minItems: 1,
           uniqueItems: true,
           description:
-            "Legacy flat footer metric selection. Mapped onto the default one-line skeleton (metrics not listed are hidden). Prefer ui_footer_lines for custom multi-line layouts. Cannot be combined with ui_footer_lines. Operational activity remains visible whenever the custom footer is enabled. Omit to preserve the current selection.",
+            "Legacy flat footer metric selection. Mutually exclusive with ui_footer_lines.",
         }),
       ),
       subagent_result_display: Type.Optional(
         StringEnum(DETAIL_DISPLAYS, {
-          description:
-            "How completed Subagent results render by default: full preserves complete output; compact shows a bounded preview that can be expanded with app.tools.expand. Omit to preserve the current value.",
+          description: "Subagent result display: full or compact preview.",
         }),
       ),
       bash_tool_display: Type.Optional(
         StringEnum(DETAIL_DISPLAYS, {
           description:
-            "How Bash commands and output render by default: compact keeps a one-line command plus a bounded output preview with a hidden-line count and expands with app.tools.expand; full keeps every command expanded. Omit to preserve the current value.",
+            "Bash output display: compact (one-line + bounded preview) or full.",
         }),
       ),
       file_mutation_display: Type.Optional(
         StringEnum(DETAIL_DISPLAYS, {
-          description:
-            "How Write/Edit content and diffs render by default: compact shows a Claude Code-style folded preview with a hidden-line count and expands with app.tools.expand; full keeps every operation expanded. Omit to preserve the current value.",
+          description: "Write/Edit display: compact folded preview or full.",
         }),
       ),
       subagent_role_models: Type.Optional(SUBAGENT_ROLE_MODELS_SCHEMA),
@@ -336,7 +204,13 @@ export default function openPiSetup(pi: ExtensionAPI) {
         Type.String({
           maxLength: POST_EDIT_COMMAND_MAX_CHARS,
           description:
-            'A single shell command (maximum 500 characters) to run in the background after a turn with successful Write/Edit operations, e.g. "npm run format". Runs once per changed turn, not per edit, and only in an interactive TUI session. Set to an empty string to turn it off. Omit to preserve the current value.',
+            "Shell command run after turns with Write/Edit (empty string disables).",
+        }),
+      ),
+      extension_load_group: Type.Optional(
+        StringEnum(EXTENSION_LOAD_GROUPS, {
+          description:
+            "Which OpenPI extension load group the package manifest exposes: all (24 extensions, default), core-runtime (no ask-user/context-pivot), core (system+setup+core only, pure coding). Requires /reload to activate.",
         }),
       ),
     }),
@@ -442,23 +316,36 @@ export default function openPiSetup(pi: ExtensionAPI) {
               (provider, modelId) => ctx.modelRegistry.find(provider, modelId),
             ),
           },
+          extensions: {
+            loadGroup:
+              params.extension_load_group ?? current.extensions.loadGroup,
+          },
         };
         return config;
       };
 
       // Patch the document as it is on disk now, not as it was when this call
       // started, and report any stored value that was normalized or migrated.
+      const previousGroup = loadSetupConfig().extensions.loadGroup;
       const { config, replaced } = await updateSetupConfig(buildConfig);
+      let manifestNote = "";
+      if (config.extensions.loadGroup !== previousGroup) {
+        const entries = syncExtensionManifest(config.extensions.loadGroup);
+        manifestNote = ` Package manifest updated to ${entries.length} extension entries — /reload to activate.`;
+      }
       pi.events.emit(SETUP_CONFIG_CHANGED_CHANNEL, config);
       const text = formatSetupConfig(config);
       const note =
         replaced.length > 0
           ? ` Normalized or migrated stored values: ${replaced.join(", ")}.`
           : "";
-      if (ctx.hasUI) ctx.ui.notify(`${text}${note}`, "info");
+      if (ctx.hasUI) ctx.ui.notify(`${text}${note}${manifestNote}`, "info");
       return {
         content: [
-          { type: "text", text: `Updated OpenPI setup. ${text}${note}` },
+          {
+            type: "text",
+            text: `Updated OpenPI setup. ${text}${note}${manifestNote}`,
+          },
         ],
         details: config,
       };
@@ -491,6 +378,8 @@ export default function openPiSetup(pi: ExtensionAPI) {
           currentConfiguration,
           "",
           "Footer tips: presets are powerline, powerline-mono, compact; style is plain/powerline/powerline-mono; custom layouts use ui_footer_lines (2D enum arrays with optional flex). Do not use ui_footer_items together with ui_footer_lines. Built-in Agent role models (explorer, implementer, reviewer, advisor) are shared by subagent_spawn and workflow agent_type; they inherit the parent unless assigned an available registry model, and clearing an assignment restores inheritance. Custom agent-type files still override built-in role definitions. Nerd Font only affects powerline separator glyphs. Changes apply immediately in the active TUI session. Intercom installation is handled only by the native setup confirmation; do not install packages or edit its config yourself.",
+          "",
+          "Extension load groups: all (24 extensions, default), core-runtime (drops ask-user/context-pivot), core (system+setup+core only). Switching groups rewrites the OpenPI package manifest's pi.extensions list and takes effect after /reload.",
           "",
           "Use configure_my_pi_setup to apply only the requested OpenPI-owned changes and preserve everything else. Interpret model names from the available Pi registry. Do not edit configuration files directly.",
         ]

@@ -30,3 +30,5 @@ my-pi-setup.json.*.tmp
 # Local editor settings
 .vscode/
 .idea/
+.obsidian/
+docs/knowledge-base/

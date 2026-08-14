@@ -15,7 +15,19 @@ export interface TaskItem {
   detail?: string;
   status: TaskStatus;
   note?: string;
+  /**
+   * What a blocked task is waiting on (plan-tree's open-question separation):
+   * "owner" = a human decision/ruling, "third_party" = an external service or
+   * actor, "info" = missing information. Technical blockers omit this.
+   */
+  waitingOn?: "owner" | "third_party" | "info";
+  /** Evidence reference for done/dropped: commit SHA, file path, or verification. */
+  evidence?: string;
 }
+
+/** plan-tree-aligned waiting classification for blocked tasks. */
+export const WAITING_ON = ["owner", "third_party", "info"] as const;
+export type WaitingOn = (typeof WAITING_ON)[number];
 
 export interface TaskSnapshot {
   version: 1;
@@ -29,6 +41,8 @@ export interface TaskAddInput {
   detail?: string;
   status?: TaskStatus;
   note?: string;
+  waitingOn?: WaitingOn;
+  evidence?: string;
 }
 
 export interface TaskUpdateInput {
@@ -37,6 +51,8 @@ export interface TaskUpdateInput {
   detail?: string | null;
   status?: TaskStatus;
   note?: string | null;
+  waitingOn?: WaitingOn | null;
+  evidence?: string | null;
 }
 
 export interface TaskFilter {
@@ -65,10 +81,115 @@ const REQUIRED_NOTE_STATUSES = new Set<TaskStatus>([
   "done",
   "dropped",
 ]);
+
+/**
+ * Order used when a single "next actionable task" must be picked (omp's
+ * `nextActionableTask`): the item in flight wins, then the oldest open one.
+ * Blocked items are waiting on something external — not actionable by the
+ * agent — so they are deliberately excluded.
+ */
+const ACTIONABLE_ORDER: Record<TaskStatus, number> = {
+  in_progress: 0,
+  pending: 1,
+  blocked: 2,
+  done: 3,
+  dropped: 4,
+};
+
+/** The next task an agent should be working on, or undefined when none. */
+export function nextActionableTask(
+  items: readonly TaskItem[],
+): TaskItem | undefined {
+  const actionable = items
+    .filter(
+      (item) => item.status === "pending" || item.status === "in_progress",
+    )
+    .sort(
+      (left, right) =>
+        ACTIONABLE_ORDER[left.status] - ACTIONABLE_ORDER[right.status] ||
+        left.id - right.id,
+    );
+  return actionable[0];
+}
+
+/**
+ * Fold a subject/description down to a stable match key (omp's
+ * `normalizeForTodoMatch`, plus space removal): lowercase, then every run of
+ * non-letter/non-digit characters — punctuation AND whitespace — is dropped,
+ * so "切片2：四端关卡" and "切片 2 四端关卡" reconcile (CJK text often
+ * spaces digits differently), and "Sonnet #2" matches "sonnet 2".
+ */
+export function normalizeForTaskMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .trim();
+}
+
+/** omp's substring-fallback floor for todo↔description matching. */
+const TASK_MATCH_MIN_OVERLAP = 6;
+
+/**
+ * Whether a subagent description matches a task subject well enough to
+ * auto-close it (omp's `todoMatchesAnyDescription`): normalize-then-equal
+ * first, then a substring fallback in either direction with a length floor,
+ * so minor wording drift still links up.
+ */
+export function taskMatchesDescription(
+  subject: string,
+  description: string,
+): boolean {
+  const a = normalizeForTaskMatch(subject);
+  const b = normalizeForTaskMatch(description);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length >= TASK_MATCH_MIN_OVERLAP && b.includes(a)) return true;
+  if (b.length >= TASK_MATCH_MIN_OVERLAP && a.includes(b)) return true;
+  return false;
+}
+
+/**
+ * Single in-progress invariant (omp's `normalizeInProgressTask`): marking one
+ * item in_progress demotes any other in-progress item back to pending. The
+ * HUD and projections both read better when exactly one thing is in flight.
+ */
+export function normalizeSingleInProgress(
+  items: readonly TaskItem[],
+  inProgressId: number,
+): TaskItem[] {
+  return items.map((item) =>
+    item.id !== inProgressId && item.status === "in_progress"
+      ? { ...item, status: "pending" as const }
+      : item,
+  );
+}
 const SNAPSHOT_KEYS = new Set(["version", "revision", "nextId", "items"]);
-const ITEM_KEYS = new Set(["id", "subject", "detail", "status", "note"]);
-const ADD_KEYS = new Set(["subject", "detail", "status", "note"]);
-const UPDATE_KEYS = new Set(["id", "subject", "detail", "status", "note"]);
+const ITEM_KEYS = new Set([
+  "id",
+  "subject",
+  "detail",
+  "status",
+  "note",
+  "waitingOn",
+  "evidence",
+]);
+const ADD_KEYS = new Set([
+  "subject",
+  "detail",
+  "status",
+  "note",
+  "waitingOn",
+  "evidence",
+]);
+const UPDATE_KEYS = new Set([
+  "id",
+  "subject",
+  "detail",
+  "status",
+  "note",
+  "waitingOn",
+  "evidence",
+]);
 const PROJECTION_HEADER =
   "Session tasks: advisory context, not an instruction to resume unrelated work. " +
   "Real files, git, tests, tools, artifacts, and user confirmation are truth. " +
@@ -160,6 +281,12 @@ export function applyTaskAdd(
         ...(hasOwn(addition, "detail") ? { detail: addition.detail } : {}),
         status: addition.status ?? "pending",
         ...(hasOwn(addition, "note") ? { note: addition.note } : {}),
+        ...(hasOwn(addition, "waitingOn")
+          ? { waitingOn: addition.waitingOn }
+          : {}),
+        ...(hasOwn(addition, "evidence")
+          ? { evidence: addition.evidence }
+          : {}),
       },
       `additions[${index}]`,
     );
@@ -208,6 +335,19 @@ export function applyTaskUpdate(
     note = undefined;
   if (hasOwn(update, "note")) note = update.note ?? undefined;
 
+  // waitingOn only means something while blocked; leaving blocked clears it.
+  // Evidence only means something while done/dropped; leaving those clears it.
+  let waitingOn = previous.waitingOn;
+  if (statusChanged && previous.status === "blocked") waitingOn = undefined;
+  if (hasOwn(update, "waitingOn")) waitingOn = update.waitingOn ?? undefined;
+  let evidence = previous.evidence;
+  if (
+    statusChanged &&
+    (previous.status === "done" || previous.status === "dropped")
+  )
+    evidence = undefined;
+  if (hasOwn(update, "evidence")) evidence = update.evidence ?? undefined;
+
   const changed = validateItem(
     {
       id: previous.id,
@@ -221,6 +361,8 @@ export function applyTaskUpdate(
           : { detail: previous.detail }),
       status,
       ...(note === undefined ? {} : { note }),
+      ...(waitingOn === undefined ? {} : { waitingOn }),
+      ...(evidence === undefined ? {} : { evidence }),
     },
     "updated item",
   );
@@ -235,12 +377,18 @@ export function applyTaskUpdate(
 
   const items = base.items.slice();
   items[index] = changed;
+  // Single in-progress invariant (omp's normalizeInProgressTask): starting
+  // this item demotes any other in-flight item back to pending.
+  const normalized =
+    status === "in_progress"
+      ? normalizeSingleInProgress(items, changed.id)
+      : items;
   const candidate = closeCompletedTaskBatch(
     validateTaskSnapshot({
       version: 1,
       revision: increment(base.revision, "snapshot revision"),
       nextId: base.nextId,
-      items,
+      items: normalized,
     }),
   );
   return { snapshot: candidate, items: cloneItems([changed]) };
@@ -371,7 +519,11 @@ export function projectTasks(snapshot: TaskSnapshot): string {
 
   let output = PROJECTION_HEADER;
   for (const item of actionable) {
-    const line = `\nT${item.id} [${item.status}] ${singleLine(item.subject)}`;
+    const waiting =
+      item.status === "blocked" && item.waitingOn
+        ? ` (${item.waitingOn === "owner" ? "等你决策" : item.waitingOn === "third_party" ? "等第三方" : "缺信息"})`
+        : "";
+    const line = `\nT${item.id} [${item.status}]${waiting} ${singleLine(item.subject)}`;
     if (charCount(output + line) > TASKS_LIMITS.projectionChars) break;
     output += line;
   }
@@ -451,6 +603,90 @@ export function createSessionTasks(
   };
 }
 
+/** omp's checklist markers, reused verbatim for export/import fidelity. */
+const STATUS_MARKER: Record<TaskStatus, string> = {
+  pending: " ",
+  in_progress: "/",
+  blocked: "!",
+  done: "x",
+  dropped: "-",
+};
+
+const MARKER_STATUS: Record<string, TaskStatus> = {
+  " ": "pending",
+  "": "pending",
+  x: "done",
+  X: "done",
+  "/": "in_progress",
+  ">": "in_progress",
+  "!": "blocked",
+  "-": "dropped",
+  "~": "dropped",
+};
+
+/**
+ * Render the batch as an editable Markdown checklist (omp's
+ * `phasesToMarkdown`): one line per task, marker in `[ ]`, done items as
+ * `[x]`. Notes ride in a trailing ` -- note` suffix so a hand-edited file
+ * still round-trips.
+ */
+export function tasksToMarkdown(snapshot: TaskSnapshot): string {
+  if (snapshot.items.length === 0) return "# Tasks\n";
+  const lines = snapshot.items.map((item) => {
+    const note = item.note ? ` -- ${singleLine(item.note)}` : "";
+    return `- [${STATUS_MARKER[item.status]}] ${singleLine(item.subject)}${note}`;
+  });
+  return `# Tasks\n\n${lines.join("\n")}\n`;
+}
+
+/**
+ * Parse an edited checklist back into task items (omp's `markdownToPhases`).
+ * The imported list replaces the batch wholesale; ids are reassigned in file
+ * order and the `-- note` suffix is recovered when present.
+ */
+export function markdownToTasks(markdown: string): {
+  items: TaskAddInput[];
+  errors: string[];
+} {
+  const items: TaskAddInput[] = [];
+  const errors: string[] = [];
+  const lines = markdown.split(/\r?\n/);
+  let inList = false;
+  for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
+    const raw = lines[lineNumber]!;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    if (/^#{1,6}\s+/.test(trimmed)) {
+      inList = true;
+      continue;
+    }
+    const match = /^[-*+]\s*\[(.?)\]\s+(.+?)\s*$/.exec(trimmed);
+    if (!match) {
+      if (inList)
+        errors.push(`Line ${lineNumber + 1}: unrecognized syntax "${trimmed}"`);
+      continue;
+    }
+    const status = MARKER_STATUS[match[1]!];
+    if (!status) {
+      errors.push(
+        `Line ${lineNumber + 1}: unknown status marker "[${match[1]}]" (use [ ], [/], [x], [!], [-])`,
+      );
+      continue;
+    }
+    const rawContent = match[2]!.trim();
+    const noteMatch = /^(.*?)\s+--\s+(.*)$/.exec(rawContent);
+    const subject = noteMatch ? noteMatch[1]!.trim() : rawContent;
+    items.push({
+      subject: takeChars(subject, TASKS_LIMITS.subjectChars),
+      ...(noteMatch
+        ? { note: takeChars(noteMatch[2]!.trim(), TASKS_LIMITS.noteChars) }
+        : {}),
+      ...(status === "pending" ? {} : { status }),
+    });
+  }
+  return { items, errors };
+}
+
 export function isTaskBatchComplete(snapshot: TaskSnapshot) {
   const checked = validateTaskSnapshot(snapshot);
   return (
@@ -496,13 +732,40 @@ function validateItem(value: unknown, path: string): TaskItem {
   if (REQUIRED_NOTE_STATUSES.has(status) && note === undefined) {
     fail(`${path}.note is required for ${status}`);
   }
+  // waitingOn: only meaningful while blocked (plan-tree's open-question
+  // classification); a non-blocked item carrying it is a contradiction.
+  const waitingOn = hasOwn(value, "waitingOn")
+    ? validateWaitingOn(value.waitingOn, `${path}.waitingOn`)
+    : undefined;
+  if (waitingOn !== undefined && status !== "blocked") {
+    fail(`${path}.waitingOn is only valid while status is blocked`);
+  }
+  const evidence = hasOwn(value, "evidence")
+    ? normalizeText(
+        value.evidence,
+        `${path}.evidence`,
+        TASKS_LIMITS.noteChars,
+        true,
+      )
+    : undefined;
   return {
     id: value.id as number,
     subject,
     ...(detail !== undefined ? { detail } : {}),
     status,
     ...(note !== undefined ? { note } : {}),
+    ...(waitingOn !== undefined ? { waitingOn } : {}),
+    ...(evidence !== undefined ? { evidence } : {}),
   };
+}
+
+function validateWaitingOn(value: unknown, path: string): WaitingOn {
+  if (typeof value !== "string" || !WAITING_ON.includes(value as WaitingOn)) {
+    fail(
+      `${path} must be one of ${WAITING_ON.map((w) => `"${w}"`).join(", ")}`,
+    );
+  }
+  return value as WaitingOn;
 }
 
 function validateStatus(value: unknown, path: string): TaskStatus {

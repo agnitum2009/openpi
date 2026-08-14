@@ -1,0 +1,128 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  buildReminderText,
+  claimSignalInjection,
+  detectSignals,
+  extractCommand,
+  injectReminder,
+  lastUserMessageHasAuthorization,
+  resetSignalInjectionClaim,
+} from "./signal-detection.ts";
+
+test("detectSignals recognizes commit and verify commands", () => {
+  assert.deepEqual(detectSignals("git commit -m 'fix: x'"), ["commit"]);
+  assert.deepEqual(detectSignals("npx tsc --noEmit"), ["verify"]);
+  assert.deepEqual(detectSignals("git commit && npx tsc"), [
+    "commit",
+    "verify",
+  ]);
+  assert.deepEqual(detectSignals("ls -la"), []);
+  // A plain test run is verify, not commit.
+  assert.deepEqual(detectSignals("npm run verify"), ["verify"]);
+});
+
+test("extractCommand reads the bash command from common event shapes", () => {
+  assert.equal(
+    extractCommand({ input: { command: "git commit" } }),
+    "git commit",
+  );
+  assert.equal(extractCommand({ params: { command: "npm test" } }), "npm test");
+  assert.equal(extractCommand({ input: "ls" }), "ls");
+  assert.equal(extractCommand({ params: "pwd" }), "pwd");
+  assert.equal(extractCommand({ input: {} }), null);
+  assert.equal(extractCommand({}), null);
+});
+
+test("authorization detection scans the last user message only", () => {
+  const messages = [
+    { role: "assistant", content: [{ type: "text", text: "done" }] },
+    { role: "user", content: [{ type: "text", text: "请继续" }] },
+  ];
+  assert.equal(lastUserMessageHasAuthorization(messages), false);
+  assert.equal(
+    lastUserMessageHasAuthorization([
+      ...messages,
+      { role: "user", content: "裁定：T11 继续推进" },
+    ]),
+    true,
+  );
+  assert.equal(
+    lastUserMessageHasAuthorization([
+      ...messages,
+      { role: "user", content: [{ type: "text", text: "approved" }] },
+    ]),
+    true,
+  );
+  // A user message without text is not an authorization.
+  assert.equal(
+    lastUserMessageHasAuthorization([
+      { role: "user", content: [{ type: "image", data: "x" }] },
+    ]),
+    false,
+  );
+});
+
+test("injectReminder appends to the last user message and clones input", () => {
+  const messages = [
+    { role: "user", content: "first" },
+    { role: "assistant", content: "reply" },
+    { role: "user", content: [{ type: "text", text: "second" }] },
+  ];
+  const injected = injectReminder(messages, "⚠️ 提醒", "multi-signal-sync");
+  assert.ok(injected);
+  assert.match(JSON.stringify(injected), /<multi-signal-sync>/);
+  assert.match(JSON.stringify(injected), /⚠️ 提醒/);
+  // Original untouched.
+  assert.equal(JSON.stringify(messages).includes("multi-signal-sync"), false);
+  // String-content user message becomes a block array.
+  const single = injectReminder([{ role: "user", content: "only" }], "x", "t");
+  assert.ok(
+    Array.isArray((single?.[0] as { content?: unknown } | undefined)?.content),
+  );
+});
+
+test("claimSignalInjection dedupes across extensions by signal set", () => {
+  assert.equal(claimSignalInjection(["commit"]), true);
+  // The sibling extension claiming the same signal is refused — one
+  // injection regardless of which handler runs first.
+  assert.equal(claimSignalInjection(["commit"]), false);
+  // A different signal set is a fresh claim.
+  assert.equal(claimSignalInjection(["verify"]), true);
+  // A superset is a fresh claim too.
+  assert.equal(claimSignalInjection(["commit", "verify"]), true);
+  resetSignalInjectionClaim();
+  assert.equal(claimSignalInjection(["commit"]), true);
+});
+
+test("buildReminderText carries terse signal labels per context", () => {
+  assert.match(buildReminderText(["commit", "verify"]), /commit\+验证通过/);
+  assert.match(
+    buildReminderText(["commit"], "commit-task-sync"),
+    /完成信号（commit）/,
+  );
+});
+
+test("signal boundary cases: chains, amend, case sensitivity", () => {
+  // Chained commands still carry the signal.
+  assert.deepEqual(detectSignals("git add . && git commit -m x"), ["commit"]);
+  assert.deepEqual(detectSignals("git commit --amend -m x"), ["commit"]);
+  // The pattern is case-sensitive by design (shell commands are lowercase).
+  assert.deepEqual(detectSignals("Git Commit"), []);
+  // A plain echo containing the phrase is still text-matched (documented
+  // limitation: detection is command-text based, like any regex detector).
+  assert.deepEqual(detectSignals('echo "git commit"'), ["commit"]);
+  // Verify patterns do not match bare test runners without the markers.
+  assert.deepEqual(detectSignals("npm test"), []);
+  assert.deepEqual(detectSignals("node --test --grep x"), ["verify"]);
+  // Empty and whitespace commands are null-safe.
+  assert.deepEqual(detectSignals(""), []);
+  assert.deepEqual(detectSignals("   "), []);
+});
+
+test("extractCommand is null-safe on malformed events", () => {
+  assert.equal(extractCommand({ input: { command: 42 } }), null);
+  assert.equal(extractCommand({ input: null }), null);
+  assert.equal(extractCommand({ params: [] }), null);
+  assert.equal(extractCommand({ input: { command: "" } }), "");
+});

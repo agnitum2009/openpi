@@ -8,7 +8,7 @@
  *
  * The allowlist can only ever NARROW. Pi composes it with the child denylist as
  * `(!allowed || allowed.has(name)) && !excluded.has(name)`, so naming an
- * excluded tool here cannot resurrect it (see `../../shared/child-session.ts`).
+ * excluded tool here cannot resurrect it (see `./child-session.ts`).
  *
  * Discovery is two-tier: `<agentDir>/agents/*.md` always, and `<cwd>/.pi/agents/
  * *.md` only in a trusted project — a project file supplies an
@@ -30,15 +30,27 @@ import {
 import {
   CHILD_EXCLUDED_TOOL_NAMES,
   CHILD_SAFE_PACKAGE_TOOL_NAMES,
-} from "../../shared/child-session.ts";
-import { sanitizeTerminalText } from "../../shared/terminal-text.ts";
+} from "./child-session.ts";
+import { sanitizeTerminalText } from "./terminal-text.ts";
 import {
   isSubagentRoleName,
   type SubagentRoleModel,
-} from "../../shared/subagent-roles.ts";
-import { REASONING_EFFORTS, type ReasoningEffort } from "./domain.ts";
+} from "./subagent-roles.ts";
 
 /** Directory name scanned under both the agent dir and a project's `.pi`. */
+/** Reasoning levels accepted by agent types and the spawn tool. */
+export const REASONING_EFFORTS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
 export const AGENT_TYPES_DIR_NAME = "agents";
 
 /** Bounds mirroring the Agent Skills conventions Pi uses for `SKILL.md`. */
@@ -214,6 +226,15 @@ export interface AgentTypeDiagnostic {
   /** File the problem came from, or the directory for a scan failure. */
   readonly source: string;
   readonly message: string;
+  /**
+   * "warning" = actionable problem, surfaced in the session-start toast.
+   * "note" = expected, non-actionable behavior (a third-party extension
+   * tool the static KNOWN_TOOL_NAMES list cannot know — the authoritative
+   * check is the child-launch preflight, which fails closed — or a
+   * legitimate same-name override). Notes stay stderr-only so recurring
+   * session starts never nag about them.
+   */
+  readonly severity: "warning" | "note";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -291,7 +312,10 @@ export function parseAgentType(
   let rejectedName = stem;
   const fail = (message: string) => ({
     rejectedName,
-    diagnostics: [...diagnostics, { source, message }],
+    diagnostics: [
+      ...diagnostics,
+      { source, message, severity: "warning" as const },
+    ],
   });
   if (Buffer.byteLength(content, "utf8") > AGENT_TYPE_LIMITS.fileBytes) {
     return fail(`file exceeds ${AGENT_TYPE_LIMITS.fileBytes} bytes`);
@@ -345,6 +369,7 @@ export function parseAgentType(
       diagnostics.push({
         source,
         message: `"${tool}" in ${name} is a parent-only tool; the child cannot receive it, so it is ignored`,
+        severity: "warning",
       });
       continue;
     }
@@ -352,6 +377,7 @@ export function parseAgentType(
     diagnostics.push({
       source,
       message: `unrecognized tool "${tool}" in ${name}; launch will verify it after child extensions initialize`,
+      severity: "note",
     });
   }
   // A misspelled KEY is the dangerous direction: `tool:` or `allowed_tools:`
@@ -420,6 +446,7 @@ function loadDirectory(directory: string) {
       diagnostics.push({
         source: directory,
         message: `could not read agent types: ${error instanceof Error ? error.message : String(error)}; all lower-precedence definitions are blocked`,
+        severity: "warning",
       });
     }
     return { agentTypes, rejectedNames, diagnostics, blockAllFallback };
@@ -441,6 +468,7 @@ function loadDirectory(directory: string) {
     diagnostics.push({
       source: directory,
       message: `more than ${AGENT_TYPE_LIMITS.files} agent types; rejecting the rest so they cannot fall back to broader definitions`,
+      severity: "warning",
     });
     for (const file of files.slice(AGENT_TYPE_LIMITS.files)) {
       rejectedNames.add(file.slice(0, -3));
@@ -461,6 +489,7 @@ function loadDirectory(directory: string) {
       diagnostics.push({
         source: filePath,
         message: `could not read file: ${error instanceof Error ? error.message : String(error)}`,
+        severity: "warning",
       });
       continue;
     }
@@ -510,6 +539,7 @@ export function loadAgentTypes(options: LoadAgentTypesOptions) {
         diagnostics.push({
           source: rejectedName,
           message: `malformed higher-precedence definition blocks fallback to ${shadowed.source}`,
+          severity: "warning",
         });
       }
       agentTypes.delete(rejectedName);
@@ -520,6 +550,7 @@ export function loadAgentTypes(options: LoadAgentTypesOptions) {
         diagnostics.push({
           source: agentType.source,
           message: `overrides the agent type of the same name from ${shadowed.source}`,
+          severity: "note",
         });
       }
       agentTypes.set(agentType.name, agentType);
@@ -540,4 +571,18 @@ export function formatAgentTypeDiagnostics(
       ...diagnostics.map((entry) => `- ${entry.source}: ${entry.message}`),
     ].join("\n"),
   );
+}
+
+/**
+ * Session-start toast policy: only actionable warnings surface in the UI.
+ * Deferred-verification notes (third-party extension tools the static
+ * KNOWN_TOOL_NAMES list cannot know — the authoritative check is the
+ * child-launch preflight, which fails closed) and legitimate same-name
+ * overrides stay stderr-only, so recurring session starts never nag about
+ * them.
+ */
+export function agentTypeWarnings(
+  diagnostics: readonly AgentTypeDiagnostic[],
+): AgentTypeDiagnostic[] {
+  return diagnostics.filter((entry) => entry.severity === "warning");
 }

@@ -12,6 +12,9 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui";
 import type { TaskItem, TaskSnapshot } from "./tasks.ts";
+import { taskMatchesDescription } from "./tasks.ts";
+import { getTaskWidgetAttachment } from "../shared/task-widget-attachment.ts";
+import { getRunningSubagentDescriptions } from "../shared/task-reconcile.ts";
 
 const STATUS_ICON: Record<TaskItem["status"], string> = {
   pending: "○",
@@ -20,6 +23,54 @@ const STATUS_ICON: Record<TaskItem["status"], string> = {
   done: "✓",
   dropped: "×",
 };
+
+/**
+ * Time-driven busy glyph for the widget's in-progress row, mirroring omp's
+ * spinner cadence: the row visibly moves while work is in flight, so a long
+ * agent turn cannot read as a frozen task panel. Static views (tool results,
+ * the /tasks screen) keep the plain `●`, because they are settled snapshots.
+ */
+export const SPINNER_FRAMES = ["◐", "◓", "◑", "◒"] as const;
+export const SPINNER_FRAME_MS = 160;
+
+export function spinnerFrame(now: number) {
+  return Math.floor(now / SPINNER_FRAME_MS) % SPINNER_FRAMES.length;
+}
+
+/**
+ * Sweep a brightness band across a text run, omp-style shimmer: every
+ * character outside the band is dim, inside it steps up to muted and then
+ * accent+bold at the crest. The band advances at a fixed cell velocity, so at
+ * the widget's redraw cadence it moves about one cell per frame — the row
+ * visibly *flows* from across the room, unlike a small spinning glyph that
+ * only reads up close.
+ */
+export function shimmerText(
+  text: string,
+  theme: Theme,
+  now: number,
+  options: { speedCellsPerS?: number; bandHalfWidth?: number } = {},
+): string {
+  const speed = options.speedCellsPerS ?? 8;
+  const bandHalf = options.bandHalfWidth ?? 5;
+  const width = [...text].length;
+  if (width === 0) return text;
+  const period = width + bandHalf * 2;
+  const crest = (((now / 1000) * speed) % period) - bandHalf;
+  let out = "";
+  let index = 0;
+  for (const ch of text) {
+    const dist = Math.abs(index - crest);
+    out +=
+      dist <= 1
+        ? theme.bold(theme.fg("accent", ch))
+        : dist <= bandHalf
+          ? theme.fg("muted", ch)
+          : theme.fg("dim", ch);
+    index++;
+  }
+  return out;
+}
 
 const TASK_WIDGET_ORDER: Record<TaskItem["status"], number> = {
   in_progress: 0,
@@ -178,11 +229,21 @@ export function renderTaskRows(
       );
     }
     if (item.note) {
+      const waitingLabel =
+        item.status === "blocked" && item.waitingOn
+          ? item.waitingOn === "owner"
+            ? "等你决策"
+            : item.waitingOn === "third_party"
+              ? "等第三方"
+              : "缺信息"
+          : "Blocked";
       const label =
         item.status === "blocked"
-          ? "Blocked"
+          ? waitingLabel
           : item.status === "done"
-            ? "Evidence"
+            ? item.evidence
+              ? `Evidence ${item.evidence}`
+              : "Evidence"
             : item.status === "dropped"
               ? "Reason"
               : "Note";
@@ -202,6 +263,7 @@ export function renderTaskWidget(
   theme: Theme,
   width: number,
   expanded = false,
+  now = Date.now(),
 ) {
   const tracked = snapshot.items.filter((item) => item.status !== "dropped");
   const actionable = tracked
@@ -213,7 +275,15 @@ export function renderTaskWidget(
     );
   if (actionable.length === 0) return [];
 
-  const hasOverflow = actionable.length > TASK_WIDGET_LIMIT;
+  // Completed items stay visible, struck through and dimmed, mirroring omp's
+  // todo HUD: the glance that finds what is left also sees what is behind.
+  // Dropped items stay hidden — they are deliberate discard, not history.
+  const done = tracked
+    .filter((item) => item.status === "done")
+    .sort((left, right) => left.id - right.id);
+  const all = [...actionable, ...done];
+
+  const hasOverflow = all.length > TASK_WIDGET_LIMIT;
   const toggleHint = hasOverflow
     ? `  ·  ctrl+shift+t ${expanded ? "collapse" : "show all"}`
     : "";
@@ -226,27 +296,64 @@ export function renderTaskWidget(
     "  " +
     renderTaskSummary(taskCounts(tracked), theme) +
     theme.fg("dim", `  ·  /tasks${toggleHint}`);
-  const visible = expanded
-    ? actionable
-    : actionable.slice(0, TASK_WIDGET_LIMIT);
-  const hidden = actionable.length - visible.length;
+  const visible = expanded ? all : all.slice(0, TASK_WIDGET_LIMIT);
+  const hidden = all.length - visible.length;
   // Right-aligned like the full list, with the same floor: a widget whose ids
   // are ragged next to a list whose ids are not reads as a different control.
   const idWidth = Math.max(...visible.map((i) => `T${i.id}`.length), 3);
   const lines = [truncateToWidth(header, width)];
+  // A sibling extension (multi-signal-sync) can pin a completion-signal
+  // reminder here; it renders as the first row under the census so the notice
+  // reads together with the list it asks the agent to sync.
+  const attachment = getTaskWidgetAttachment();
+  if (attachment) {
+    lines.push(truncateToWidth(theme.fg("warning", `  ${attachment}`), width));
+  }
   for (const [index, item] of visible.entries()) {
     const color =
+      item.status === "done"
+        ? "success"
+        : item.status === "in_progress"
+          ? "warning"
+          : item.status === "blocked"
+            ? "error"
+            : "muted";
+    const icon =
       item.status === "in_progress"
-        ? "warning"
-        : item.status === "blocked"
-          ? "error"
-          : "muted";
+        ? SPINNER_FRAMES[spinnerFrame(now)]
+        : STATUS_ICON[item.status];
+    // Light up (omp): a pending task a running subagent's title matches is
+    // already being worked on — render it accent so the overlap is visible
+    // before the reconcile closes it.
+    const litUp =
+      item.status === "pending" &&
+      getRunningSubagentDescriptions().some((description) =>
+        taskMatchesDescription(item.subject, description),
+      );
+    // The in-flight row's subject carries the shimmer sweep instead of the
+    // static full-weight bold: the whole row flows, so "still running" reads
+    // at a glance from across the room.
+    const subject =
+      item.status === "in_progress"
+        ? shimmerText(item.subject, theme, now)
+        : litUp
+          ? theme.bold(theme.fg("accent", item.subject))
+          : subjectStyle(item.status, theme)(item.subject);
+    // Frozen frame (now === 0) means the turn settled: a still-in-progress
+    // item is leftover state, not work in flight. Mark it instead of letting
+    // the plain status read as "running" (omp keeps todo rows static; we keep
+    // the honesty and add the explicit marker).
+    const staleMark =
+      item.status === "in_progress" && now === 0
+        ? ` ${theme.fg("warning", "⚠ 未同步")}`
+        : "";
     const branch = index === visible.length - 1 && hidden === 0 ? "╰─" : "├─";
     lines.push(
       truncateToWidth(
         // Same subject weighting as the full list, so the item in flight reads
-        // the same wherever you happen to be looking.
-        `${theme.fg("dim", branch)} ${theme.fg(color, STATUS_ICON[item.status])} ${theme.fg("dim", `T${item.id}`.padStart(idWidth))} ${subjectStyle(item.status, theme)(item.subject)}`,
+        // the same wherever you happen to be looking; done subjects carry the
+        // same strikethrough as the tool result and the /tasks screen.
+        `${theme.fg("dim", branch)} ${theme.fg(litUp ? "accent" : color, icon)} ${theme.fg("dim", `T${item.id}`.padStart(idWidth))} ${subject}${staleMark}`,
         width,
       ),
     );
@@ -254,6 +361,20 @@ export function renderTaskWidget(
   if (hidden > 0) {
     lines.push(
       truncateToWidth(theme.fg("dim", `╰─ … ${hidden} more tasks`), width),
+    );
+  }
+  // Frozen in-progress items are stale (⚠ 未同步): give the one-line
+  // resolution path right where the marker is, so the user does not have to
+  // remember the /tasks workflow.
+  if (now === 0 && visible.some((item) => item.status === "in_progress")) {
+    lines.push(
+      truncateToWidth(
+        theme.fg(
+          "dim",
+          `  ⚠ 未同步 → /tasks → 确认列表 → 按 s → 全部 done → esc 返回`,
+        ),
+        width,
+      ),
     );
   }
   return lines;
@@ -329,21 +450,24 @@ class TasksScreen implements Component {
   private readonly tui: TUI;
   private readonly theme: Theme;
   private readonly keybindings: KeybindingsManager;
-  private readonly snapshot: TaskSnapshot;
+  private readonly getSnapshot: () => TaskSnapshot;
   private readonly done: () => void;
+  private readonly onSyncStale: () => void;
 
   constructor(
     tui: TUI,
     theme: Theme,
     keybindings: KeybindingsManager,
-    snapshot: TaskSnapshot,
+    getSnapshot: () => TaskSnapshot,
     done: () => void,
+    onSyncStale: () => void = () => {},
   ) {
     this.tui = tui;
     this.theme = theme;
     this.keybindings = keybindings;
-    this.snapshot = snapshot;
+    this.getSnapshot = getSnapshot;
     this.done = done;
+    this.onSyncStale = onSyncStale;
   }
 
   handleInput(data: string) {
@@ -376,17 +500,24 @@ class TasksScreen implements Component {
       this.offset += 10;
       this.tui.requestRender();
     }
+    if (data === "s") {
+      this.onSyncStale();
+      this.tui.requestRender();
+    }
   }
 
   render(width: number) {
-    const body = renderTaskRows(this.snapshot.items, this.theme, width - 4);
+    // Live snapshot: the s-key sync mutates tasks while the screen is open,
+    // and a stale render would make the sync look like a no-op.
+    const snapshot = this.getSnapshot();
+    const body = renderTaskRows(snapshot.items, this.theme, width - 4);
     const rows = Math.max(8, (this.tui.terminal.rows || 30) - 8);
     const maxOffset = Math.max(0, body.length - rows);
     this.offset = Math.min(this.offset, maxOffset);
     const visible = body.slice(this.offset, this.offset + rows);
     const lines = [
       truncateToWidth(
-        `${this.theme.fg("accent", this.theme.bold("Session tasks"))}  ${renderTaskSummary(taskCounts(this.snapshot.items), this.theme)}`,
+        `${this.theme.fg("accent", this.theme.bold("Session tasks"))}  ${renderTaskSummary(taskCounts(snapshot.items), this.theme)}`,
         width,
       ),
       this.theme.fg("border", "─".repeat(Math.max(0, width))),
@@ -395,7 +526,10 @@ class TasksScreen implements Component {
     while (lines.length < rows + 2) lines.push("");
     lines.push(
       truncateToWidth(
-        this.theme.fg("dim", "j/k or ↑/↓ scroll · pgup/pgdn page · esc close"),
+        this.theme.fg(
+          "dim",
+          "j/k or ↑/↓ scroll · pgup/pgdn page · s sync stale · esc close",
+        ),
         width,
       ),
     );
@@ -407,15 +541,28 @@ class TasksScreen implements Component {
 
 export async function openTasksScreen(
   ctx: ExtensionCommandContext,
-  snapshot: TaskSnapshot,
+  getSnapshot: () => TaskSnapshot,
+  onSyncStale: () => void = () => {},
 ) {
   if (ctx.mode !== "tui") {
     if (ctx.hasUI)
-      ctx.ui.notify(`${snapshot.items.length} task item(s)`, "info");
+      ctx.ui.notify(`${getSnapshot().items.length} task item(s)`, "info");
     return;
   }
   await ctx.ui.custom<void>(
     (tui, theme, keybindings, done) =>
-      new TasksScreen(tui, theme, keybindings, snapshot, () => done()),
+      new TasksScreen(
+        tui,
+        theme,
+        keybindings,
+        getSnapshot,
+        () => done(),
+        onSyncStale,
+      ),
+    // Overlay, not editor replacement (omp's Hub/Dashboard style): the screen
+    // composites over the whole viewport, so the above-editor widgets and
+    // their animation timers are visually isolated while it is open — no
+    // flicker loop, and the editor container is left untouched.
+    { overlay: true, overlayOptions: { anchor: "top-center", width: "100%" } },
   );
 }

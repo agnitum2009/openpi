@@ -33,7 +33,6 @@ import type {
   ExtensionUIContext,
 } from "@earendil-works/pi-coding-agent";
 import {
-  CustomEditor,
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
   defineTool,
@@ -46,27 +45,27 @@ import {
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
+  agentTypeWarnings,
   formatAgentTypeDiagnostics,
   loadAgentTypes,
   roleModelForAgentType,
   selectSubagentModel,
   type AgentType,
-} from "./src/agent-types.ts";
+} from "../shared/agent-types.ts";
 import { deriveBtwTitle, isModelVisible } from "./src/by-the-way.ts";
 import {
   BACKEND_NAMES,
   formatElapsed,
   latestText,
-  REASONING_EFFORTS,
   type SubagentSnapshot,
 } from "./src/domain.ts";
-import {
-  formatActivityStatus,
-  hasActivity,
-  unreadActivityCounts,
-} from "../shared/activity-status.ts";
+import { REASONING_EFFORTS } from "../shared/agent-types.ts";
 import { formatContextUtilization } from "./src/format.ts";
-import { SubagentManager, type SubagentManagerShape } from "./src/manager.ts";
+import {
+  MAX_TRACKED,
+  SubagentManager,
+  type SubagentManagerShape,
+} from "./src/manager.ts";
 import {
   buildSubagentResultMessage,
   createAgentTypeParameterSchema,
@@ -87,17 +86,26 @@ import {
   SUBAGENT_WAIT_PARAMETER_DESCRIPTIONS,
   SUBAGENT_WAIT_TOOL_DESCRIPTION,
 } from "./src/prompt.ts";
-import { createDeferredResultDelivery } from "./src/result-delivery.ts";
-import { resultDeliveryOptions } from "../background-terminals/src/result-delivery.ts";
+import {
+  createDeferredResultDelivery,
+  resultDeliveryOptions,
+} from "../shared/result-delivery.ts";
 import {
   effectiveChildToolAllowlist,
   resolveStandaloneChildProjectTrust,
 } from "../shared/child-session.ts";
+import { BelowEditorStripState } from "../shared/below-editor-navigation.ts";
 import {
-  BelowEditorNavigationEditor,
-  BelowEditorStripState,
-} from "../shared/below-editor-navigation.ts";
+  installEditorEnhancements,
+  registerEditorStrip,
+} from "../shared/editor-strip-port.ts";
 import { loadSetupConfig } from "../shared/setup-config.ts";
+import { recordSettledSubagent } from "../shared/task-reconcile.ts";
+import { setRunningSubagents } from "../shared/session-liveness.ts";
+import {
+  resetRunningSubagentDescriptions,
+  setRunningSubagentDescriptions,
+} from "../shared/task-reconcile.ts";
 import {
   PLAN_MODE_CHANNEL,
   planModeAllowsDeclaredTools,
@@ -197,7 +205,12 @@ export default function (pi: ExtensionAPI) {
   let widgetVisible = false;
   let requestWidgetRender: (() => void) | undefined;
   let dashboardOpen = false;
-  const resultDelivery = createDeferredResultDelivery<SubagentSnapshot>();
+  // Bounded backlog (shared-kernel cap): a busy session settles children
+  // without draining, so the deferred map must have its own ceiling or it
+  // grows unbounded and flushes into context in one lump. Evicted results
+  // stay reachable in the tracked history (subagent_status).
+  const resultDelivery =
+    createDeferredResultDelivery<SubagentSnapshot>(MAX_TRACKED);
 
   const getRuntime = () => (runtime ??= createSubagentRuntime());
 
@@ -209,7 +222,18 @@ export default function (pi: ExtensionAPI) {
         navigationManager = manager;
         manager.view.setOnSettled(onSettled);
         unsubStatus?.();
-        unsubStatus = manager.view.subscribe(() => updateStatus(manager));
+        unsubStatus = manager.view.subscribe(() => {
+          // Light-up source: keep the running-child descriptions fresh so the
+          // tasks widget can highlight pending tasks already being worked on.
+          const running = manager.view
+            .list()
+            .filter((snap) => snap.status === "running");
+          setRunningSubagentDescriptions(
+            running.map((snap) => snap.title || snap.id),
+          );
+          updateStatus(manager);
+          setRunningSubagents(running.length);
+        });
         updateStatus(manager);
         return manager;
       });
@@ -240,25 +264,25 @@ export default function (pi: ExtensionAPI) {
       widgetKey,
       (tui, theme) => {
         requestWidgetRender = () => tui.requestRender();
-        return new SubagentStripWidget(tui, theme, stripState, stripEntry);
+        return new SubagentStripWidget(
+          tui,
+          theme,
+          stripState,
+          stripEntry,
+          () => navigationManager?.view.list() ?? [],
+        );
       },
-      { placement: "belowEditor" },
+      // Above the editor, like omp's sticky Subagents HUD: one contiguous block
+      // between the transcript and the prompt, never torn apart by tool rows.
+      { placement: "aboveEditor" },
     );
     widgetVisible = true;
   };
 
   const updateStatus = (manager: SubagentManagerShape) => {
-    if (!ui) return;
-    const counts = unreadActivityCounts(
-      manager.view.list(),
-      settledAcknowledgedAt,
-    );
-    ui.setStatus(
-      "subagents",
-      hasActivity(counts)
-        ? formatActivityStatus(ui.theme, "subagents", counts)
-        : undefined,
-    );
+    // Activity is reported by the HUD above the editor (running rows, unread
+    // settled notice, header metrics) — deliberately NOT also pinned to the
+    // footer status bar, so subagent state lives in exactly one place.
     updateSubagentWidget();
   };
 
@@ -278,28 +302,26 @@ export default function (pi: ExtensionAPI) {
     }
   };
 
+  // DDD editor port: register this extension's strip binding instead of
+  // wrapping the editor itself. The shared installer (editor-strip-port.ts)
+  // wraps the editor exactly once per runtime, composing every extension's
+  // bindings in registration order — no nested wrappers, no restacking on
+  // /resume (structural change → full-viewport repaint avoided).
   const installSubagentNavigation = (ctx: ExtensionContext) => {
     if (ctx.mode !== "tui") return;
-    const previous = ctx.ui.getEditorComponent();
-    ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-      const base =
-        previous?.(tui, theme, keybindings) ??
-        new CustomEditor(tui, theme, keybindings);
-      return new BelowEditorNavigationEditor(
-        base,
-        keybindings,
-        stripState,
-        () => Boolean(stripEntry()),
-        () => {
-          const entry = stripEntry();
-          if (entry) void openDashboard(ctx, entry.snapshot.id);
-        },
-        () => {
-          requestWidgetRender?.();
-          tui.requestRender();
-        },
-      );
+    registerEditorStrip({
+      id: "subagents",
+      state: stripState,
+      canManage: () => Boolean(stripEntry()),
+      open: () => {
+        const entry = stripEntry();
+        if (entry) void openDashboard(ctx, entry.snapshot.id);
+      },
+      requestRender: () => {
+        requestWidgetRender?.();
+      },
     });
+    installEditorEnhancements(ctx);
   };
 
   /**
@@ -384,6 +406,15 @@ export default function (pi: ExtensionAPI) {
       deliverBtwResult({ ...snap, meta: { ...snap.meta } });
       return;
     }
+    // Reconciliation bridge (omp's #reconcileTodosWithSubagents): record the
+    // settled child so the tasks extension can auto-close a matching open
+    // task at agent_settled. Failed/aborted children are recorded with
+    // ok=false and deliberately left open by the reconciler.
+    recordSettledSubagent({
+      id: snap.id,
+      description: snap.title || snap.id,
+      ok: snap.status === "done",
+    });
     // Mark the finish in the transcript. The result itself reaches the model
     // separately; this line is for the reader watching the run.
     pi.appendEntry<SubagentFinishedData>("subagent-finished", {
@@ -415,10 +446,18 @@ export default function (pi: ExtensionAPI) {
     updateSubagentWidget();
     // A malformed agent type is silently missing from the roster otherwise, so
     // report it once. Never fatal: the rest still loaded. Non-UI modes receive
-    // stderr rather than a model-context message.
-    const notice = formatAgentTypeDiagnostics(agentTypeDiagnostics);
-    if (notice && ctx.hasUI) ctx.ui.notify(notice, "warning");
-    else if (notice) process.stderr.write(`${notice}\n`);
+    // stderr rather than a model-context message. Only actionable warnings
+    // earn the toast: deferred-verification notes (third-party extension
+    // tools, verified fail-closed at child launch) and legitimate overrides
+    // would otherwise nag on every session start.
+    const warnings = formatAgentTypeDiagnostics(
+      agentTypeWarnings(agentTypeDiagnostics),
+    );
+    if (warnings && ctx.hasUI) ctx.ui.notify(warnings, "warning");
+    else if (!ctx.hasUI) {
+      const full = formatAgentTypeDiagnostics(agentTypeDiagnostics);
+      if (full) process.stderr.write(`${full}\n`);
+    }
   });
 
   // A new explicit request starts a fresh unread window: previously finished
@@ -437,8 +476,8 @@ export default function (pi: ExtensionAPI) {
     resultDelivery.clear();
     unsubStatus?.();
     unsubStatus = undefined;
+    resetRunningSubagentDescriptions();
     try {
-      ui?.setStatus("subagents", undefined);
       sessionContext?.ui.setWidget(widgetKey, undefined);
     } catch {
       // UI may already be disposed.

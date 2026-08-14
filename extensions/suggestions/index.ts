@@ -1,7 +1,6 @@
-import {
-  CustomEditor,
-  type ExtensionAPI,
-  type ExtensionContext,
+import type {
+  ExtensionAPI,
+  ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
   loadSetupConfig,
@@ -17,6 +16,10 @@ import {
   NextActionSuggestionEditor,
   NextActionSuggestionState,
 } from "./src/ui.ts";
+import {
+  installEditorEnhancements,
+  registerEditorRenderEnhancement,
+} from "../shared/editor-strip-port.ts";
 
 const STATUS_KEY = "suggestions";
 const SHUTDOWN_WAIT_MS = 1_000;
@@ -72,21 +75,27 @@ export default function (pi: ExtensionAPI) {
 
   const installSuggestionEditor = (ctx: ExtensionContext) => {
     if (ctx.mode !== "tui") return;
-    const previous = ctx.ui.getEditorComponent();
-    ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-      const base =
-        previous?.(tui, theme, keybindings) ??
-        new CustomEditor(tui, theme, keybindings);
-      requestEditorRender = () => tui.requestRender();
-      return new NextActionSuggestionEditor(
-        base,
-        keybindings,
-        suggestionState,
-        cancelPrediction,
-        requestEditorRender,
-        (text) => ctx.ui.theme.fg("dim", text),
-      );
+    // DDD editor port: the suggestions line is a render-layer enhancement
+    // (it never navigates — canManage is false), so it registers as a wrap
+    // step; the shared installer applies it once per runtime in registration
+    // order, no nested editor wrappers.
+    registerEditorRenderEnhancement({
+      id: "suggestions",
+      wrap: (base, keybindings) => {
+        const renderRequest = () => {
+          requestEditorRender?.();
+        };
+        return new NextActionSuggestionEditor(
+          base,
+          keybindings,
+          suggestionState,
+          cancelPrediction,
+          renderRequest,
+          (text) => ctx.ui.theme.fg("dim", text),
+        );
+      },
     });
+    installEditorEnhancements(ctx);
   };
 
   pi.on("session_start", (_event, ctx) => {

@@ -53,9 +53,9 @@ test("prompt requires genuine ambiguity, recommendations, and no continue questi
   const text = ASK_USER_PROMPT_GUIDELINES.join("\n");
   assert.match(text, /genuine ambiguity/);
   assert.match(text, /recommendation first/);
-  assert.match(text, /Never use it to ask whether to continue/);
-  assert.match(text, /one question per independent finding/);
-  assert.match(text, /blank free-form answer.*rephrased or split/i);
+  assert.match(text, /never to ask whether to continue/);
+  assert.match(text, /one question per independent/i);
+  assert.match(text, /blank free-form answer.*rephrase or split/i);
 });
 
 test("dismissal does not imply an answer", () => {
@@ -534,7 +534,7 @@ test("interaction tools are sequential and expose bounded usage guidance", () =>
   assert.equal(tools.get("ask_user")?.executionMode, "sequential");
   assert.match(
     tools.get("ask_user")?.promptGuidelines?.join("\n") ?? "",
-    /one question per independent finding/,
+    /one question per independent/i,
   );
   assert.equal(tools.get("human_handoff")?.executionMode, "sequential");
   assert.match(

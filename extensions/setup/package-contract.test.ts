@@ -63,7 +63,7 @@ test("the public OpenPI package has complete gallery and registry metadata", () 
   assert.equal(manifest.devDependencies?.prettier, undefined);
   assert.equal(
     manifest.scripts?.prepublishOnly,
-    "bun run check && bun run test",
+    "bun run check && bun run check:ddd && bun run test",
   );
   assert.deepEqual(manifest.repository, {
     type: "git",
@@ -73,7 +73,32 @@ test("the public OpenPI package has complete gallery and registry metadata", () 
   assert.deepEqual(manifest.bugs, {
     url: "https://github.com/tt-a1i/openpi/issues",
   });
-  assert.deepEqual(manifest.pi?.extensions, ["./extensions"]);
+  assert.deepEqual(manifest.pi?.extensions, [
+    "./extensions/commit-task-sync/index.ts",
+    "./extensions/copy-all/index.ts",
+    "./extensions/cron/index.ts",
+    "./extensions/file-mutation-display/index.ts",
+    "./extensions/file-search/index.ts",
+    "./extensions/git-info/index.ts",
+    "./extensions/model-info/index.ts",
+    "./extensions/multi-signal-sync/index.ts",
+    "./extensions/post-edit/index.ts",
+    "./extensions/session-liveness/index.ts",
+    "./extensions/sessions/index.ts",
+    "./extensions/suggestions/index.ts",
+    "./extensions/turn-time/index.ts",
+    "./extensions/ui-customization/index.ts",
+    "./extensions/working-indicator/index.ts",
+    "./extensions/setup/index.ts",
+    "./extensions/tasks/index.ts",
+    "./extensions/goal/index.ts",
+    "./extensions/plan-mode/index.ts",
+    "./extensions/subagents/index.ts",
+    "./extensions/background-terminals/index.ts",
+    "./extensions/workflows/index.ts",
+    "./extensions/ask-user/index.ts",
+    "./extensions/context-pivot/index.ts",
+  ]);
   assert.deepEqual(manifest.pi?.skills, ["./skills"]);
   assert.deepEqual(manifest.pi?.themes, ["./themes"]);
   assert.equal(

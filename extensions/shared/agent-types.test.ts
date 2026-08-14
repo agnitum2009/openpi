@@ -11,12 +11,13 @@ import test from "node:test";
 import {
   AGENT_TYPE_LIMITS,
   BUILT_IN_AGENT_TYPES,
+  agentTypeWarnings,
   formatAgentTypeDiagnostics,
   loadAgentTypes,
   parseAgentType,
   roleModelForAgentType,
   selectSubagentModel,
-} from "./src/agent-types.ts";
+} from "./agent-types.ts";
 import {
   CHILD_EXCLUDED_TOOL_NAMES,
   childToolPolicy,
@@ -208,6 +209,9 @@ test("an unrecognized tool name is reported but still applied", () => {
     result.diagnostics[0]?.message ?? "",
     /unrecognized tool "gerp"/,
   );
+  // Deferred verification is a note: agentTypeWarnings must keep it out of
+  // the session-start toast (third-party tools would nag on every start).
+  assert.equal(result.diagnostics[0]?.severity, "note");
 });
 
 test("an over-long body is rejected rather than silently truncated", () => {
@@ -292,6 +296,16 @@ test("a project agent type overrides the global one of the same name", async () 
     const messages = diagnostics.map((entry) => entry.message).join("\n");
     assert.match(messages, /from built-in:explorer/);
     assert.match(messages, /from .*agent\/agents\/explorer\.md/);
+    // Legitimate overrides are notes: transparent on stderr, never a toast.
+    for (const entry of diagnostics) {
+      assert.match(
+        entry.message,
+        /overrides the agent type/,
+        "override diagnostics are the only expected ones here",
+      );
+      assert.equal(entry.severity, "note");
+    }
+    assert.equal(agentTypeWarnings(diagnostics).length, 0);
   });
 });
 
@@ -397,6 +411,7 @@ test("agent-type diagnostics strip terminal control sequences", () => {
     {
       source: "\u001b]52;c;Y2xpcGJvYXJk\u0007bad.md",
       message: "\u001b[31mwrong\u001b[0m",
+      severity: "warning",
     },
   ]);
   assert.equal(notice, "Agent types: 1 problem.\n- bad.md: wrong");
@@ -528,6 +543,12 @@ Body.
   const messages = parsed.diagnostics.map((d) => d.message).join("\n");
   assert.match(messages, /"subagent_spawn" in helper is a parent-only tool/);
   assert.match(messages, /unrecognized tool "gerp"/);
+  // Intent that can never be fulfilled stays a warning (act on it), while
+  // the deferred-verification note stays a note — the toast filter keeps
+  // exactly the actionable one.
+  assert.equal(parsed.diagnostics[0]?.severity, "warning");
+  assert.equal(parsed.diagnostics[1]?.severity, "note");
+  assert.equal(agentTypeWarnings(parsed.diagnostics).length, 1);
 });
 
 test("a symlinked agent type is discovered like a real file", async () => {

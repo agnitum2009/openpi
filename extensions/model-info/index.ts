@@ -11,7 +11,7 @@ import {
 const CHARS_PER_ESTIMATED_TOKEN = 4;
 const LIVE_UPDATE_INTERVAL_MS = 200;
 
-function getSessionMetrics(ctx: ExtensionContext) {
+export function getSessionMetrics(ctx: ExtensionContext) {
   let cost = 0;
   let cacheRead = 0;
   let promptTokens = 0;
@@ -38,7 +38,7 @@ function getSessionMetrics(ctx: ExtensionContext) {
   };
 }
 
-function estimateContentTokens(characters: number) {
+export function estimateContentTokens(characters: number) {
   return Math.ceil(characters / CHARS_PER_ESTIMATED_TOKEN);
 }
 
@@ -223,7 +223,13 @@ export default function modelInfo(pi: ExtensionAPI) {
   pi.on("session_tree", (_event, ctx) => refresh(ctx));
 
   pi.on("agent_settled", (_event, ctx) => {
-    state = { ...state, generating: false };
+    // Reset both turn-lifetime signals together: `generating` drives the
+    // activity flag and `tokensPerSecond` feeds the footer throughput segment.
+    // Leaving tokensPerSecond stale kept the last turn's tok/s visible in the
+    // footer after the agent settled — a stale-state residue, not an honest
+    // "no active stream" state. Nulling it collapses the segment back to
+    // "— tok/s" exactly when streaming stops (agent_start re-arms it).
+    state = { ...state, generating: false, tokensPerSecond: null };
     refresh(ctx);
   });
 

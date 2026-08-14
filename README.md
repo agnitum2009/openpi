@@ -357,6 +357,7 @@ macOS/Linux arm64 与 x64 缺少二进制时，OpenPI 会从官方 Release 下�
 /openpi-setup Bash 展开，Write/Edit 保持紧凑
 /openpi-setup 编辑后自动跑 npm run format
 /openpi-setup 给 explorer 指定模型，让 reviewer 继承父模型
+/openpi-setup 扩展加载组 core（纯编码：卸载 subagents/workflows）
 ```
 
 配置保存在 `~/.pi/agent/my-pi-setup.json`，与包代码分离，升级不会覆盖。
@@ -372,6 +373,7 @@ macOS/Linux arm64 与 x64 缺少二进制时，OpenPI 会从官方 Release 下�
 | Dashboard Footer             | 开启；单行 `powerline`                         |
 | Subagent / Bash / Write/Edit | `full` / `compact` / `compact`                 |
 | Post-edit 命令               | 关闭；单条命令最多 500 字符                    |
+| 扩展加载组                   | `all`（24 个扩展）；`core-runtime` / `core` 可选，切换后 `/reload` 生效 |
 | 内置角色模型                 | 全部继承父模型                                 |
 | pi-intercom                  | 不静默安装；由用户明确选择                     |
 | 主题                         | 保留用户现有选择                               |

@@ -125,13 +125,25 @@ export default function uiCustomization(pi: ExtensionAPI) {
   // Kept for process lifetime so configure_my_pi_setup still refreshes later sessions.
   pi.events.on(SETUP_CONFIG_CHANGED_CHANNEL, () => {
     if (!activeSession || activeSession.mode !== "tui") return;
+    // A config-change event IS the change signal — the idempotence signature
+    // exists to absorb repeated session_start calls with unchanged config,
+    // not to swallow real user edits. Reset it so install() re-applies.
+    installedSignature = undefined;
     install(activeSession);
     requestRender?.();
   });
 
+  let installedSignature: string | undefined;
   function install(ctx: ExtensionContext) {
     if (ctx.mode !== "tui") return;
     const config = loadSetupConfig().ui;
+    // Idempotent: session_start re-fires on every /resume, and each
+    // setHeader/setFooter destroys and rebuilds the header/footer components
+    // (structural change → full-viewport repaint). Re-install only when the
+    // configured signature actually changed.
+    const signature = `${config.showHeader ? "h" : "-"}:${config.customFooter ? "f" : "-"}`;
+    if (signature === installedSignature) return;
+    installedSignature = signature;
 
     if (config.showHeader) {
       ctx.ui.setHeader((tui) => {
@@ -208,6 +220,11 @@ export default function uiCustomization(pi: ExtensionAPI) {
     // against a shut-down context. The config listener stays armed for later sessions.
     activeSession = undefined;
     stopDashboardListeners();
+    // The idempotence signature must die with the session: it was written by
+    // the install this shutdown just unmounted, and a stale signature would
+    // silently skip the next session's header/footer install (adversarial
+    // finding: same cross-session state-residue class as the /tasks flag).
+    installedSignature = undefined;
     requestRender = undefined;
     if (ctx.mode === "tui") {
       ctx.ui.setHeader(undefined);

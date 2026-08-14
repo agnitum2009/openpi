@@ -33,7 +33,6 @@ import { randomBytes } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  CustomEditor,
   getAgentDir,
   getMarkdownTheme,
   keyHint,
@@ -43,7 +42,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type, type Static } from "typebox";
-import { formatActivityStatus } from "../shared/activity-status.ts";
 import { waitBounded } from "../shared/child-session.ts";
 import { loadSetupConfig } from "../shared/setup-config.ts";
 import {
@@ -51,7 +49,7 @@ import {
   resolveAgentModel,
   roleModelForAgentType,
   selectSubagentModel,
-} from "../subagents/src/agent-types.ts";
+} from "../shared/agent-types.ts";
 import {
   createWorktree,
   reclaimWorktree,
@@ -132,11 +130,15 @@ import {
   WORKFLOW_TOOL_DESCRIPTION,
 } from "./prompt.ts";
 import {
-  WorkflowNavigationEditor,
   WorkflowStripState,
   WorkflowStripWidget,
   type WorkflowStripEntry,
 } from "./navigation.ts";
+import {
+  installEditorEnhancements,
+  registerEditorStrip,
+} from "../shared/editor-strip-port.ts";
+import { setRunningWorkflows } from "../shared/session-liveness.ts";
 import {
   createWorkflowResources,
   runAgent,
@@ -429,8 +431,6 @@ export default function workflows(pi: ExtensionAPI) {
    * next explicit request acknowledges them.
    */
   let lastContext: ExtensionContext | undefined;
-  let completedRuns = 0;
-  let failedRuns = 0;
   let widgetVisible = false;
   let requestWidgetRender: (() => void) | undefined;
   let dashboardOpen = false;
@@ -482,7 +482,9 @@ export default function workflows(pi: ExtensionAPI) {
         requestWidgetRender = () => tui.requestRender();
         return new WorkflowStripWidget(tui, theme, stripState, stripEntry);
       },
-      { placement: "belowEditor" },
+      // Above the editor, like the Subagents HUD: one contiguous block between
+      // the transcript and the prompt, never torn apart by tool rows.
+      { placement: "aboveEditor" },
     );
     widgetVisible = true;
   };
@@ -491,19 +493,10 @@ export default function workflows(pi: ExtensionAPI) {
     const ctx = lastContext;
     if (!ctx) return;
     try {
-      const running = activeRuns.size;
-      if (running === 0 && completedRuns === 0 && failedRuns === 0) {
-        ctx.ui.setStatus("workflows", undefined);
-      } else {
-        ctx.ui.setStatus(
-          "workflows",
-          formatActivityStatus(ctx.ui.theme, "workflows", {
-            running,
-            done: completedRuns,
-            failed: failedRuns,
-          }),
-        );
-      }
+      // Activity is reported by the HUD above the editor (header metrics,
+      // per-agent rows) — deliberately NOT also pinned to the footer status
+      // bar, so workflow state lives in exactly one place.
+      setRunningWorkflows(activeRuns.size);
       updateWorkflowWidget();
     } catch {
       // UI may be unavailable.
@@ -511,15 +504,11 @@ export default function workflows(pi: ExtensionAPI) {
   };
 
   const acknowledgeSettledRuns = () => {
-    completedRuns = 0;
-    failedRuns = 0;
     settledRuns.clear();
   };
 
   const recordSettledRun = (details: WorkflowDetails) => {
     settledRuns.set(details.runId, details);
-    if (details.status === "completed") completedRuns += 1;
-    else failedRuns += 1;
   };
 
   const stopRun = (runId: string) => {
@@ -554,26 +543,22 @@ export default function workflows(pi: ExtensionAPI) {
 
   const installWorkflowNavigation = (ctx: ExtensionContext) => {
     if (ctx.mode !== "tui") return;
-    const previous = ctx.ui.getEditorComponent();
-    ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-      const base =
-        previous?.(tui, theme, keybindings) ??
-        new CustomEditor(tui, theme, keybindings);
-      return new WorkflowNavigationEditor(
-        base,
-        keybindings,
-        stripState,
-        () => Boolean(stripEntry()),
-        () => {
-          const entry = stripEntry();
-          if (entry) void openDashboard(ctx, entry.runId);
-        },
-        () => {
-          requestWidgetRender?.();
-          tui.requestRender();
-        },
-      );
+    // DDD editor port: register this strip binding; the shared installer
+    // wraps the editor once per runtime (no nested wrappers, no restacking
+    // on /resume).
+    registerEditorStrip({
+      id: "workflows",
+      state: stripState,
+      canManage: () => Boolean(stripEntry()),
+      open: () => {
+        const entry = stripEntry();
+        if (entry) void openDashboard(ctx, entry.runId);
+      },
+      requestRender: () => {
+        requestWidgetRender?.();
+      },
     });
+    installEditorEnhancements(ctx);
   };
 
   pi.on("session_start", (_event, ctx) => {
@@ -584,8 +569,6 @@ export default function workflows(pi: ExtensionAPI) {
       projectTrusted: ctx.isProjectTrusted(),
     }).agentTypes;
     turnStartedAt = 0;
-    completedRuns = 0;
-    failedRuns = 0;
     settledRuns.clear();
     installWorkflowNavigation(ctx);
     updateIndicator();
