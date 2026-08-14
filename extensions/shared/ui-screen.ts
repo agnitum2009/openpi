@@ -17,7 +17,10 @@ export function isCustomScreenOpen(): boolean {
   return customScreenOpen;
 }
 
-/** Single repaint choke point for widget animation timers. */
+/** Single repaint choke point for widget animation timers. State-change
+ *  one-shot repaints (the subagents/workflows/session-liveness widgets) call
+ *  tui.requestRender() directly: they fire only on real data changes, which
+ *  should render even while a custom screen is open. */
 export function requestWidgetRepaint(tui: { requestRender(): void }): void {
   if (customScreenOpen) return;
   tui.requestRender();

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   getSessionLiveness,
   resetSessionLiveness,
+  setMainAgentBusy,
   setRunningSubagents,
   setRunningWorkflows,
   subscribeSessionLiveness,
@@ -15,6 +16,7 @@ test("liveness merges subagent and workflow counters", () => {
     detail: "",
     runningSubagents: 0,
     runningWorkflows: 0,
+    mainAgentBusy: false,
   });
   setRunningSubagents(2);
   assert.equal(getSessionLiveness().active, true);
@@ -35,4 +37,50 @@ test("subscribers are notified on change only", () => {
   setRunningSubagents(1); // no-op, no notification
   setRunningSubagents(0);
   assert.deepEqual(seen, ["", "1 subagent", ""]);
+});
+
+test("main-agent busy gate rides the merged state", () => {
+  resetSessionLiveness();
+  // Busy alone never activates liveness: no children, nothing to report.
+  setMainAgentBusy(true);
+  assert.deepEqual(getSessionLiveness(), {
+    active: false,
+    detail: "",
+    runningSubagents: 0,
+    runningWorkflows: 0,
+    mainAgentBusy: true,
+  });
+  // Children while busy: active, but consumers must fold instead of
+  // mounting the strip (strip rule is active && !mainAgentBusy).
+  setRunningSubagents(2);
+  assert.equal(getSessionLiveness().active, true);
+  assert.equal(getSessionLiveness().mainAgentBusy, true);
+  // Main agent settles behind running children: strip case.
+  setMainAgentBusy(false);
+  assert.equal(getSessionLiveness().active, true);
+  assert.equal(getSessionLiveness().mainAgentBusy, false);
+});
+
+test("busy transitions notify subscribers on change only", () => {
+  resetSessionLiveness();
+  const seen: boolean[] = [];
+  subscribeSessionLiveness((s) => seen.push(s.mainAgentBusy));
+  setMainAgentBusy(true);
+  setMainAgentBusy(true); // no-op, no notification
+  setMainAgentBusy(false);
+  assert.deepEqual(seen, [false, true, false]);
+});
+
+test("reset clears the busy gate alongside the counters", () => {
+  resetSessionLiveness();
+  setMainAgentBusy(true);
+  setRunningWorkflows(1);
+  resetSessionLiveness();
+  assert.deepEqual(getSessionLiveness(), {
+    active: false,
+    detail: "",
+    runningSubagents: 0,
+    runningWorkflows: 0,
+    mainAgentBusy: false,
+  });
 });
