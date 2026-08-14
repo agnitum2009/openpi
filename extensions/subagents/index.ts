@@ -45,6 +45,7 @@ import {
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
+  agentTypeWarnings,
   formatAgentTypeDiagnostics,
   loadAgentTypes,
   roleModelForAgentType,
@@ -445,10 +446,18 @@ export default function (pi: ExtensionAPI) {
     updateSubagentWidget();
     // A malformed agent type is silently missing from the roster otherwise, so
     // report it once. Never fatal: the rest still loaded. Non-UI modes receive
-    // stderr rather than a model-context message.
-    const notice = formatAgentTypeDiagnostics(agentTypeDiagnostics);
-    if (notice && ctx.hasUI) ctx.ui.notify(notice, "warning");
-    else if (notice) process.stderr.write(`${notice}\n`);
+    // stderr rather than a model-context message. Only actionable warnings
+    // earn the toast: deferred-verification notes (third-party extension
+    // tools, verified fail-closed at child launch) and legitimate overrides
+    // would otherwise nag on every session start.
+    const warnings = formatAgentTypeDiagnostics(
+      agentTypeWarnings(agentTypeDiagnostics),
+    );
+    if (warnings && ctx.hasUI) ctx.ui.notify(warnings, "warning");
+    else if (!ctx.hasUI) {
+      const full = formatAgentTypeDiagnostics(agentTypeDiagnostics);
+      if (full) process.stderr.write(`${full}\n`);
+    }
   });
 
   // A new explicit request starts a fresh unread window: previously finished
