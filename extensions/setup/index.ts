@@ -105,7 +105,54 @@ async function maybeOfferPiIntercom(
   }
 }
 
+export const CONFIGURE_MY_PI_SETUP_TOOL_NAME = "configure_my_pi_setup";
+
+type SetupEpisode = "idle" | "armed" | "active";
+
+function showConfigureTool(pi: ExtensionAPI) {
+  const active = pi.getActiveTools();
+  if (active.includes(CONFIGURE_MY_PI_SETUP_TOOL_NAME)) return;
+  pi.setActiveTools([...active, CONFIGURE_MY_PI_SETUP_TOOL_NAME]);
+}
+
+function hideConfigureTool(pi: ExtensionAPI) {
+  const active = pi.getActiveTools();
+  if (!active.includes(CONFIGURE_MY_PI_SETUP_TOOL_NAME)) return;
+  pi.setActiveTools(
+    active.filter((name) => name !== CONFIGURE_MY_PI_SETUP_TOOL_NAME),
+  );
+}
+
 export default function openPiSetup(pi: ExtensionAPI) {
+  let episode: SetupEpisode = "idle";
+
+  const endEpisode = () => {
+    hideConfigureTool(pi);
+    episode = "idle";
+  };
+
+  pi.on("session_start", () => {
+    endEpisode();
+  });
+
+  pi.on("agent_start", () => {
+    if (episode === "armed") episode = "active";
+  });
+
+  pi.on("tool_execution_end", (event) => {
+    if (
+      episode === "active" &&
+      event.toolName === CONFIGURE_MY_PI_SETUP_TOOL_NAME &&
+      !event.isError
+    ) {
+      endEpisode();
+    }
+  });
+
+  pi.on("agent_settled", () => {
+    if (episode === "active") endEpisode();
+  });
+
   pi.registerTool({
     name: "configure_my_pi_setup",
     label: "Configure OpenPI",
@@ -390,6 +437,8 @@ export default function openPiSetup(pi: ExtensionAPI) {
           savedConfigExists,
         });
 
+    showConfigureTool(pi);
+    episode = "armed";
     pi.sendUserMessage(
       prompt.join("\n"),
       ctx.isIdle() ? undefined : { deliverAs: "followUp" },

@@ -438,7 +438,7 @@ pi install npm:pi-intercom
 | `ask_user`, `human_handoff`                                                                              | 经复核的用户决策与用户专属操作 |
 | `plan_ready`                                                                                             | 显式完成计划，不自动开始实施   |
 | `fd`, `rg`                                                                                               | 文件发现与内容搜索             |
-| `configure_my_pi_setup`                                                                                  | 受限配置写入                   |
+| `configure_my_pi_setup`                                                                                  | `/openpi-setup` 进行中才暴露的受限配置写入 |
 
 </details>
 

@@ -1,39 +1,335 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 import { SUBAGENT_ROLE_NAMES } from "../shared/subagent-roles.ts";
 import {
   SUBAGENT_ROLE_MODELS_SCHEMA,
   applySubagentRoleModelUpdates,
   buildInteractiveSetupPrompt,
+  CONFIGURE_MY_PI_SETUP_TOOL_NAME,
   shouldOfferPiIntercom,
 } from "./domain.ts";
 import setupExtension from "./index.ts";
 
-test("registers the canonical setup command, legacy alias, and one constrained tool", () => {
-  const commands = new Set<string>();
-  const tools = new Set<string>();
-  let parameterNames: string[] = [];
-  const api = {
-    registerCommand: (name: string) => commands.add(name),
-    registerTool: (tool: { name: string; parameters: unknown }) => {
-      tools.add(tool.name);
-      parameterNames = Object.keys(
-        (tool.parameters as { properties: Record<string, unknown> }).properties,
-      );
+type Handler = (
+  event: Record<string, unknown>,
+  ctx: ExtensionContext,
+) => unknown;
+
+function visibilityHarness(
+  options: {
+    initialActive?: string[];
+    mode?: ExtensionCommandContext["mode"];
+    idle?: boolean;
+  } = {},
+) {
+  const commands = new Map<
+    string,
+    { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }
+  >();
+  const tools = new Map<string, { name: string; parameters: unknown }>();
+  const handlers = new Map<string, Handler[]>();
+  let activeTools = [
+    ...(options.initialActive ?? ["read", "bash", "edit", "write"]),
+  ];
+  const userMessages: Array<{ content: unknown; options: unknown }> = [];
+  const setActiveCalls: string[][] = [];
+  let idle = options.idle ?? true;
+
+  const pi = {
+    events: { emit() {} },
+    registerCommand(
+      name: string,
+      command: {
+        handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+      },
+    ) {
+      commands.set(name, command);
+    },
+    registerTool(tool: { name: string; parameters: unknown }) {
+      tools.set(tool.name, tool);
+      // Pi refreshTools() adds newly registered names to the active set.
+      if (!activeTools.includes(tool.name)) {
+        activeTools = [...activeTools, tool.name];
+      }
+    },
+    on(event: string, handler: Handler) {
+      handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+    },
+    getActiveTools() {
+      return [...activeTools];
+    },
+    setActiveTools(names: string[]) {
+      setActiveCalls.push([...names]);
+      activeTools = [...names];
+    },
+    getAllTools() {
+      return [...tools.keys()].map((name) => ({ name }));
+    },
+    getThinkingLevel() {
+      return "off";
+    },
+    sendUserMessage(content: unknown, sendOptions?: unknown) {
+      userMessages.push({ content, options: sendOptions });
     },
   } as unknown as ExtensionAPI;
 
-  setupExtension(api);
+  setupExtension(pi);
 
-  assert.deepEqual(commands, new Set(["openpi-setup", "my-pi-setup"]));
-  assert.deepEqual(tools, new Set(["configure_my_pi_setup"]));
-  assert.equal(parameterNames.includes("suggestions_enabled"), true);
-  assert.equal(parameterNames.includes("suggestion_model"), true);
+  const ctx = {
+    mode: options.mode ?? "rpc",
+    hasUI: false,
+    cwd: "/tmp/setup-visibility-test",
+    isIdle: () => idle,
+    model: undefined,
+    ui: {
+      confirm: async () => false,
+      notify() {},
+      setWorkingMessage() {},
+    },
+  } as unknown as ExtensionCommandContext & ExtensionContext;
+
+  return {
+    tools,
+    commands,
+    userMessages,
+    setActiveCalls,
+    ctx,
+    isActive() {
+      return activeTools.includes(CONFIGURE_MY_PI_SETUP_TOOL_NAME);
+    },
+    activeNames() {
+      return [...activeTools];
+    },
+    async emit(event: string, data: Record<string, unknown> = {}) {
+      for (const handler of handlers.get(event) ?? []) {
+        await handler({ type: event, ...data }, ctx);
+      }
+    },
+    async runCommand(name: string, args = "") {
+      const command = commands.get(name);
+      assert.ok(command, `missing command ${name}`);
+      await command.handler(args, ctx);
+    },
+    setIdle(value: boolean) {
+      idle = value;
+    },
+  };
+}
+
+test("registers the canonical setup command, legacy alias, and one constrained tool", () => {
+  const h = visibilityHarness();
+  assert.deepEqual([...h.commands.keys()].sort(), [
+    "my-pi-setup",
+    "openpi-setup",
+  ]);
+  assert.equal(h.tools.has(CONFIGURE_MY_PI_SETUP_TOOL_NAME), true);
+  const parameters = h.tools.get(CONFIGURE_MY_PI_SETUP_TOOL_NAME)!
+    .parameters as {
+    properties: Record<string, unknown>;
+  };
+  assert.equal("suggestions_enabled" in parameters.properties, true);
+  assert.equal("suggestion_model" in parameters.properties, true);
   assert.equal(
-    parameterNames.some((name) => name.startsWith("summary")),
+    Object.keys(parameters.properties).some((name) =>
+      name.startsWith("summary"),
+    ),
     false,
   );
+});
+
+test("session_start hides configure_my_pi_setup after registration refresh", async () => {
+  const h = visibilityHarness();
+  assert.equal(h.isActive(), true, "registerTool refresh activates the tool");
+  await h.emit("session_start");
+  assert.equal(h.isActive(), false);
+  assert.equal(h.tools.has(CONFIGURE_MY_PI_SETUP_TOOL_NAME), true);
+});
+
+test("openpi-setup and my-pi-setup expose the tool then inject the setup message", async () => {
+  for (const name of ["openpi-setup", "my-pi-setup"] as const) {
+    const h = visibilityHarness();
+    await h.emit("session_start");
+    assert.equal(h.isActive(), false);
+    await h.runCommand(name, "关闭下一步预测");
+    assert.equal(h.isActive(), true);
+    assert.equal(h.userMessages.length, 1);
+    assert.match(String(h.userMessages[0]?.content), /关闭下一步预测/);
+  }
+});
+
+test("successful configure_my_pi_setup hides the tool", async () => {
+  const h = visibilityHarness();
+  await h.emit("session_start");
+  await h.runCommand("openpi-setup", "关闭下一步预测");
+  await h.emit("agent_start");
+  assert.equal(h.isActive(), true);
+  await h.emit("tool_execution_end", {
+    toolName: CONFIGURE_MY_PI_SETUP_TOOL_NAME,
+    isError: false,
+  });
+  assert.equal(h.isActive(), false);
+});
+
+test("keep-without-apply hides after the setup agent run settles", async () => {
+  const h = visibilityHarness();
+  await h.emit("session_start");
+  await h.runCommand("openpi-setup", "");
+  await h.emit("agent_start");
+  assert.equal(h.isActive(), true);
+  await h.emit("agent_settled");
+  assert.equal(h.isActive(), false);
+});
+
+test("follow-up while busy does not tear down on the prior turn settle", async () => {
+  const h = visibilityHarness({ idle: false });
+  await h.emit("session_start");
+  await h.runCommand("openpi-setup", "切换 Footer 为 powerline");
+  assert.deepEqual(h.userMessages[0]?.options, { deliverAs: "followUp" });
+  assert.equal(h.isActive(), true);
+  // Current in-flight turn settles before the setup follow-up runs.
+  await h.emit("agent_settled");
+  assert.equal(h.isActive(), true);
+  await h.emit("agent_start");
+  await h.emit("agent_settled");
+  assert.equal(h.isActive(), false);
+});
+
+test("overlapping openpi-setup follow-up survives the prior apply", async () => {
+  const h = visibilityHarness();
+  await h.emit("session_start");
+  await h.runCommand("openpi-setup", "关闭下一步预测");
+  await h.emit("agent_start");
+  h.setIdle(false);
+  await h.runCommand("openpi-setup", "开启下一步预测");
+  assert.deepEqual(h.userMessages[1]?.options, { deliverAs: "followUp" });
+  assert.equal(h.isActive(), true);
+  await h.emit("tool_execution_end", {
+    toolName: CONFIGURE_MY_PI_SETUP_TOOL_NAME,
+    isError: false,
+  });
+  assert.equal(h.isActive(), true);
+  await h.emit("agent_start");
+  await h.emit("agent_settled");
+  assert.equal(h.isActive(), false);
+});
+
+test("a second openpi-setup after hide re-exposes via get+add", async () => {
+  const h = visibilityHarness({
+    initialActive: ["read", "bash", "ask_user", "workflow"],
+  });
+  await h.emit("session_start");
+  await h.runCommand("openpi-setup", "关闭下一步预测");
+  await h.emit("agent_start");
+  await h.emit("agent_settled");
+  assert.equal(h.isActive(), false);
+
+  const beforeSecond = h.setActiveCalls.length;
+  await h.runCommand("openpi-setup", "开启下一步预测");
+  assert.equal(h.isActive(), true);
+  const last = h.setActiveCalls.at(-1);
+  assert.ok(last);
+  assert.ok(last.includes("ask_user"));
+  assert.ok(last.includes("workflow"));
+  assert.ok(last.includes(CONFIGURE_MY_PI_SETUP_TOOL_NAME));
+  assert.ok(h.setActiveCalls.length > beforeSecond);
+});
+
+test("session_start after host re-includes tools hides configure tool", async () => {
+  let activeTools = ["read", "bash", CONFIGURE_MY_PI_SETUP_TOOL_NAME];
+  const handlers = new Map<string, Handler[]>();
+  const tools = new Map<string, { name: string }>();
+  const pi = {
+    events: { emit() {} },
+    registerCommand() {},
+    registerTool(tool: { name: string; parameters: unknown }) {
+      tools.set(tool.name, tool);
+      if (!activeTools.includes(tool.name)) {
+        activeTools = [...activeTools, tool.name];
+      }
+    },
+    on(event: string, handler: Handler) {
+      handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+    },
+    getActiveTools() {
+      return [...activeTools];
+    },
+    setActiveTools(names: string[]) {
+      activeTools = [...names];
+    },
+    getAllTools() {
+      return [...tools.keys()].map((name) => ({ name }));
+    },
+    getThinkingLevel() {
+      return "off";
+    },
+    sendUserMessage() {},
+  } as unknown as ExtensionAPI;
+  setupExtension(pi);
+  // Host reload includes all extension tools.
+  activeTools = [
+    "read",
+    "bash",
+    "edit",
+    "write",
+    CONFIGURE_MY_PI_SETUP_TOOL_NAME,
+  ];
+  const ctx = { mode: "rpc", hasUI: false } as unknown as ExtensionContext;
+  for (const handler of handlers.get("session_start") ?? []) {
+    await handler({ type: "session_start" }, ctx);
+  }
+  assert.equal(activeTools.includes(CONFIGURE_MY_PI_SETUP_TOOL_NAME), false);
+  assert.equal(tools.has(CONFIGURE_MY_PI_SETUP_TOOL_NAME), true);
+});
+
+test("setActiveTools never snapshot-restores unrelated tools away", async () => {
+  const h = visibilityHarness({
+    initialActive: ["read", "bash", "ask_user", "workflow", "fd"],
+  });
+  await h.emit("session_start");
+  assert.deepEqual(h.activeNames().sort(), [
+    "ask_user",
+    "bash",
+    "fd",
+    "read",
+    "workflow",
+  ]);
+  await h.runCommand("openpi-setup", "x");
+  assert.deepEqual(h.activeNames().sort(), [
+    "ask_user",
+    "bash",
+    CONFIGURE_MY_PI_SETUP_TOOL_NAME,
+    "fd",
+    "read",
+    "workflow",
+  ]);
+  await h.emit("agent_start");
+  await h.emit("agent_settled");
+  assert.deepEqual(h.activeNames().sort(), [
+    "ask_user",
+    "bash",
+    "fd",
+    "read",
+    "workflow",
+  ]);
+});
+
+test("failed configure_my_pi_setup stays visible until the setup run settles", async () => {
+  const h = visibilityHarness();
+  await h.emit("session_start");
+  await h.runCommand("openpi-setup", "关闭下一步预测");
+  await h.emit("agent_start");
+  await h.emit("tool_execution_end", {
+    toolName: CONFIGURE_MY_PI_SETUP_TOOL_NAME,
+    isError: true,
+  });
+  assert.equal(h.isActive(), true);
+  await h.emit("agent_settled");
+  assert.equal(h.isActive(), false);
 });
 
 test("offers optional Intercom only for an idle argument-free TUI setup", () => {
