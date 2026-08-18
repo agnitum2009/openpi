@@ -75,7 +75,7 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
   workingDir:
     "Trusted working directory for the autonomous child (default: current working directory)",
   isolation:
-    'Set to "worktree" to isolate a child in its own git worktree/branch (parallel editors otherwise share one checkout and overwrite each other). Child must COMMIT its work. Requires a git repository; the checkout starts clean.',
+    'Set to "worktree" for concurrent writers and tell the child to commit. Requires Git and a clean checkout. Read the subagents Skill for lifecycle, merge location, and costs.',
   model:
     'Optional model override as "provider/model-id" (or bare id). Never guess a model name.',
   reasoningEffort:

@@ -60,6 +60,15 @@ import {
   type SubagentSnapshot,
 } from "./src/domain.ts";
 import { REASONING_EFFORTS } from "../shared/agent-types.ts";
+import {
+  formatActivityStatus,
+  hasActivity,
+  unreadActivityCounts,
+} from "../shared/activity-status.ts";
+import {
+  OPENPI_TOOL_SURFACE,
+  patchOwnedTools,
+} from "../shared/tool-surface.ts";
 import { formatContextUtilization } from "./src/format.ts";
 import {
   MAX_TRACKED,
@@ -211,6 +220,14 @@ export default function (pi: ExtensionAPI) {
   // stay reachable in the tracked history (subagent_status).
   const resultDelivery =
     createDeferredResultDelivery<SubagentSnapshot>(MAX_TRACKED);
+  const hideLifecycleTools = () =>
+    patchOwnedTools(pi, "subagents", {
+      disable: OPENPI_TOOL_SURFACE.subagents.deferred,
+    });
+  const showLifecycleTools = () =>
+    patchOwnedTools(pi, "subagents", {
+      enable: OPENPI_TOOL_SURFACE.subagents.deferred,
+    });
 
   const getRuntime = () => (runtime ??= createSubagentRuntime());
 
@@ -439,6 +456,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     refreshAgentTypes(ctx.cwd, ctx.isProjectTrusted());
+    hideLifecycleTools();
     sessionContext = ctx;
     settledAcknowledgedAt = 0;
     if (ctx.hasUI) ui = ctx.ui;
@@ -719,6 +737,8 @@ export default function (pi: ExtensionAPI) {
         if (worktree) await reclaimWorktree(cwd, worktree).catch(() => {});
         throw error;
       }
+
+      showLifecycleTools();
 
       return {
         content: [

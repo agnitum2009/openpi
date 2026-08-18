@@ -42,7 +42,7 @@ export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
  * Extension load groups (P2, token-lazyload plan). The OpenPI package
  * manifest lists explicit extension entries; the setup command rewrites
  * that list per group so users pick a load shape per task profile.
- * - "all": everything (24 extensions) — the default, current behavior.
+ * - "all": everything (26 extensions) — the default, current behavior.
  * - "core-runtime": system + setup + core + runtime (no ask-user/context-pivot).
  * - "core": system + setup + core only — pure coding sessions.
  * system + setup are always loaded: system extensions carry commands/UI,
@@ -54,9 +54,13 @@ export type ExtensionLoadGroup = (typeof EXTENSION_LOAD_GROUPS)[number];
 
 export const OPENPI_EXTENSION_GROUPS = {
   system: [
+    // capability discovery owns the deferred OpenPI tool surface; without it
+    // every deferred tool stays hidden for the whole session.
+    "capabilities",
     "commit-task-sync",
     "copy-all",
     "cron",
+    "execution-convergence",
     "file-mutation-display",
     "file-search",
     "git-info",
@@ -145,6 +149,10 @@ export type FooterLines = readonly (readonly FooterLayoutItem[])[];
 export const DETAIL_DISPLAYS = ["full", "compact"] as const;
 export type DetailDisplay = (typeof DETAIL_DISPLAYS)[number];
 
+export const CAPABILITY_DISCOVERY_MODES = ["explicit", "adaptive"] as const;
+export type CapabilityDiscoveryMode =
+  (typeof CAPABILITY_DISCOVERY_MODES)[number];
+
 /** Canonical default layout: one-line Powerline dashboard with flex alignment. */
 export const DEFAULT_FOOTER_LINES: FooterLines = [
   [
@@ -205,6 +213,9 @@ export const POST_EDIT_COMMAND_MAX_CHARS = 500;
 export const SETUP_CONFIG_CHANGED_CHANNEL = "my-pi-setup:config-changed";
 
 export interface MyPiSetupConfig {
+  readonly capabilities: {
+    readonly discovery: CapabilityDiscoveryMode;
+  };
   readonly suggestions: {
     readonly enabled: boolean;
     readonly model?: SuggestionModelConfig;
@@ -243,6 +254,7 @@ export interface MyPiSetupConfig {
 }
 
 export const DEFAULT_SETUP_CONFIG: MyPiSetupConfig = {
+  capabilities: { discovery: "explicit" },
   suggestions: { enabled: false },
   workflows: {
     concurrency: DEFAULT_WORKFLOW_CONCURRENCY,
@@ -295,6 +307,11 @@ const isFooterPreset = (value: unknown): value is FooterPreset =>
 const isExtensionLoadGroup = (value: unknown): value is ExtensionLoadGroup =>
   typeof value === "string" &&
   EXTENSION_LOAD_GROUPS.includes(value as ExtensionLoadGroup);
+const isCapabilityDiscoveryMode = (
+  value: unknown,
+): value is CapabilityDiscoveryMode =>
+  typeof value === "string" &&
+  CAPABILITY_DISCOVERY_MODES.includes(value as CapabilityDiscoveryMode);
 
 export function flattenFooterItems(lines: FooterLines): readonly FooterItem[] {
   const items: FooterItem[] = [];
@@ -492,6 +509,8 @@ function boundedInteger(value: unknown, fallback: number, maximum: number) {
 export function parseSetupConfig(value: unknown): MyPiSetupConfig {
   if (!isRecord(value)) return DEFAULT_SETUP_CONFIG;
 
+  const capabilities = isRecord(value.capabilities) ? value.capabilities : {};
+
   // `summaries` is the pre-suggestion config key. Read it once as a migration
   // source; every subsequent save writes only the canonical `suggestions` key.
   const suggestions = isRecord(value.suggestions)
@@ -522,6 +541,11 @@ export function parseSetupConfig(value: unknown): MyPiSetupConfig {
   const extensions = isRecord(value.extensions) ? value.extensions : {};
   const footer = parseUiFooter(ui);
   return {
+    capabilities: {
+      discovery: isCapabilityDiscoveryMode(capabilities.discovery)
+        ? capabilities.discovery
+        : "explicit",
+    },
     suggestions: {
       enabled: requestedEnabled && Boolean(model),
       ...(model ? { model } : {}),
@@ -1039,6 +1063,7 @@ export function formatSetupConfig(
     ? `on · ${config.ui.footerStyle} · ${formatFooterLines(config.ui.footerLines)}`
     : "off";
   return [
+    `Capability discovery: ${config.capabilities.discovery}`,
     suggestions,
     `Workflows: ${config.workflows.concurrency} concurrent agents · ${config.workflows.maxAgentCalls} total calls`,
     `UI: large header ${config.ui.showHeader ? "on" : "off"} · custom footer ${footer}`,

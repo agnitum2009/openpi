@@ -96,7 +96,14 @@ function bindPrintInstance(factory: (pi: ExtensionAPI) => void) {
         if (property === "events") {
           return {
             on: (event: string, handler: AnyHandler) => record(event, handler),
+            emit: () => {},
           };
+        }
+        // Tool-surface owners reconcile their projection at bind/session time;
+        // the real ExtensionAPI always answers these, so the stand-in must too
+        // or the topology test fails for a reason that cannot happen in Pi.
+        if (property === "getActiveTools" || property === "getAllTools") {
+          return () => [];
         }
         return () => {};
       },

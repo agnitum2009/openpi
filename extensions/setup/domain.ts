@@ -93,6 +93,16 @@ export function shouldOfferPiIntercom(options: {
   );
 }
 
+export function buildSetupSuccessText(
+  currentConfiguration: string,
+  normalizationNote = "",
+) {
+  return [
+    `Updated OpenPI setup. ${currentConfiguration}${normalizationNote}`,
+    "This setup episode is complete; configure_my_pi_setup is now hidden. Do not call it again. Do not edit configuration files directly. If the user requests another configuration change, tell them to run /openpi-setup <request> to start a new setup episode.",
+  ].join(" ");
+}
+
 export function buildInteractiveSetupPrompt(options: {
   currentConfiguration: string;
   currentModel: string;
@@ -101,12 +111,12 @@ export function buildInteractiveSetupPrompt(options: {
 }) {
   const configurationState = options.savedConfigExists
     ? [
-        "This package has already been configured. Explain the current settings in the user's language, then ask whether they want to keep them or change Next-action suggestions, Workflow limits, UI/Footer, result detail display, Post-edit, Agent role models, or review everything.",
+        "This package has already been configured. Explain the current settings in the user's language, then ask whether they want to keep them or change Capability discovery, Next-action suggestions, Workflow limits, UI/Footer, result detail display, Post-edit, Agent role models, Extension load group, or review everything.",
         "If the user keeps the current settings, do not call configure_my_pi_setup. If they choose a category, ask only the follow-up needed for that category.",
       ]
     : [
         "This is the first setup. Explain the available choices and their impact in the user's language, then collect the initial preferences.",
-        "Prefer one ask_user call with up to three independent questions covering Next-action suggestions, Workflow limits, and UI/Footer/result display. Explain that Post-edit defaults off; keep it off unless the user opts in, then ask only for the command. Explain that built-in Agent roles used by subagent_spawn and workflow agent_type inherit the parent model unless the user assigns an available model to a role.",
+        "Prefer one ask_user call with up to three independent questions covering Capability discovery plus Workflow limits, Next-action suggestions, and UI/Footer/result display. Explain that Post-edit defaults off; keep it off unless the user opts in, then ask only for the command. Explain that built-in Agent roles used by subagent_spawn and workflow agent_type inherit the parent model unless the user assigns an available model to a role.",
       ];
 
   return [
@@ -121,6 +131,7 @@ export function buildInteractiveSetupPrompt(options: {
     ...configurationState,
     "",
     "Before asking, briefly explain what can be configured and the practical impact:",
+    "- Capability discovery: explicit is the safe default and keeps OpenPI model tools absent until the user asks for a capability. adaptive is opt-in and keeps only the small openpi_load_tools gateway visible, allowing the model to load Subagents, Workflows, background terminals, structured search, or Session tracking when it judges them useful. Loaded groups remain session-stable, and normal permission, concurrency, and workflow limits still apply.",
     "- Next-action suggestions: disabled, or model-generated after a fully settled main-agent run. A suggestion appears as dim inline text on the first row of an empty editor; reserved cells at the row end keep CJK IME preedit from overwriting it. Right accepts it without submitting, and any other editor input dismisses it. Enabling requires an available provider/model and reasoning level and adds one small model call per settled run.",
     "- Workflow fan-out: concurrency controls simultaneous agents and resource pressure; max agent calls controls the total capacity of one workflow. Valid ranges are 1-64 and 1-1024.",
     "- UI: the large header costs vertical space; the custom footer is a declarative dashboard. Presets: powerline (default one-line ANSI256 blocks), powerline-mono (one-line high-contrast gray powerline), and compact (one-line plain text). Style can also be set independently: plain, powerline, powerline-mono. Custom lines are a 2D layout of cwd/model/thinking/context/cache/cost/throughput/git/pr plus at most one flex per line for left/right alignment. Nerd Font only affects powerline separator glyphs; text stays readable without it. Changes apply immediately in the active TUI session.",
@@ -131,6 +142,8 @@ export function buildInteractiveSetupPrompt(options: {
     "- Intercom: optional cross-session messaging is installed only after a native setup confirmation. It stays parent-only; Direct/Workflow children and Replay cannot use it. The status above is informational for this model-guided step—do not install packages or edit its config yourself.",
     "",
     "Natural-language configuration examples the user might ask for:",
+    '- "let the model discover OpenPI capabilities when useful" → capability_discovery=adaptive',
+    '- "only use OpenPI capabilities when I ask" → capability_discovery=explicit',
     '- "switch footer to powerline" → ui_footer_preset=powerline',
     '- "use mono powerline" → ui_footer_preset=powerline-mono',
     '- "compact footer" → ui_footer_preset=compact',

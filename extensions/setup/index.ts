@@ -8,9 +8,15 @@ import {
   SUBAGENT_ROLE_MODELS_SCHEMA,
   applySubagentRoleModelUpdates,
   buildInteractiveSetupPrompt,
+  buildSetupSuccessText,
   safeSetupNotice,
   shouldOfferPiIntercom,
 } from "./domain.ts";
+import {
+  OPENPI_SETUP_EPISODE_CHANNEL,
+  type OpenPiSetupEpisodeState,
+} from "../shared/setup-episode-state.ts";
+import { patchOwnedTools } from "../shared/tool-surface.ts";
 import {
   formatPiIntercomStatus,
   inspectPiIntercom,
@@ -19,6 +25,7 @@ import {
 } from "./intercom.ts";
 import {
   applyFooterConfig,
+  CAPABILITY_DISCOVERY_MODES,
   DETAIL_DISPLAYS,
   FOOTER_ITEMS,
   FOOTER_LAYOUT_ITEMS,
@@ -36,6 +43,7 @@ import {
   SETUP_CONFIG_CHANGED_CHANNEL,
   syncExtensionManifest,
   type FooterLayoutItem,
+  type CapabilityDiscoveryMode,
   type FooterPreset,
   type FooterStyle,
   type MyPiSetupConfig,
@@ -110,25 +118,28 @@ export const CONFIGURE_MY_PI_SETUP_TOOL_NAME = "configure_my_pi_setup";
 type SetupEpisode = "idle" | "armed" | "active";
 
 function showConfigureTool(pi: ExtensionAPI) {
-  const active = pi.getActiveTools();
-  if (active.includes(CONFIGURE_MY_PI_SETUP_TOOL_NAME)) return;
-  pi.setActiveTools([...active, CONFIGURE_MY_PI_SETUP_TOOL_NAME]);
+  patchOwnedTools(pi, "setup", {
+    enable: [CONFIGURE_MY_PI_SETUP_TOOL_NAME],
+  });
 }
 
 function hideConfigureTool(pi: ExtensionAPI) {
-  const active = pi.getActiveTools();
-  if (!active.includes(CONFIGURE_MY_PI_SETUP_TOOL_NAME)) return;
-  pi.setActiveTools(
-    active.filter((name) => name !== CONFIGURE_MY_PI_SETUP_TOOL_NAME),
-  );
+  patchOwnedTools(pi, "setup", {
+    disable: [CONFIGURE_MY_PI_SETUP_TOOL_NAME],
+  });
 }
 
 export default function openPiSetup(pi: ExtensionAPI) {
   let episode: SetupEpisode = "idle";
+  const publishEpisode = () =>
+    pi.events.emit(OPENPI_SETUP_EPISODE_CHANNEL, {
+      active: episode !== "idle",
+    } satisfies OpenPiSetupEpisodeState);
 
   const endEpisode = () => {
-    hideConfigureTool(pi);
     episode = "idle";
+    hideConfigureTool(pi);
+    publishEpisode();
   };
 
   pi.on("session_start", () => {
@@ -136,7 +147,10 @@ export default function openPiSetup(pi: ExtensionAPI) {
   });
 
   pi.on("agent_start", () => {
-    if (episode === "armed") episode = "active";
+    if (episode === "armed") {
+      episode = "active";
+      publishEpisode();
+    }
   });
 
   pi.on("tool_execution_end", (event) => {
@@ -157,8 +171,14 @@ export default function openPiSetup(pi: ExtensionAPI) {
     name: "configure_my_pi_setup",
     label: "Configure OpenPI",
     description:
-      "Apply a user-requested configuration change for this Pi setup: suggestions, workflow fan-out, UI/footer, result display, Post-edit, agent-role models (null clears a role), extension load group. Preserve settings the user did not ask to change.",
+      "Apply a user-requested configuration change for this Pi setup: capability discovery (explicit or opt-in adaptive), suggestions, workflow fan-out, UI/footer, result display, Post-edit, agent-role models (null clears a role), extension load group. Preserve settings the user did not ask to change.",
     parameters: Type.Object({
+      capability_discovery: Type.Optional(
+        StringEnum(CAPABILITY_DISCOVERY_MODES, {
+          description:
+            "Capability adoption policy. explicit keeps OpenPI tools absent until the user asks for a capability; adaptive keeps only the small openpi_load_tools gateway visible so the model may load a useful group on its own. Adaptive can start expensive work such as Subagents or Workflows, so it is opt-in. Omit to preserve the current value.",
+        }),
+      ),
       suggestions_enabled: Type.Optional(
         Type.Boolean({
           description: "Whether next-action ghost suggestions are enabled.",
@@ -327,6 +347,12 @@ export default function openPiSetup(pi: ExtensionAPI) {
         );
 
         const config: MyPiSetupConfig = {
+          capabilities: {
+            discovery:
+              (params.capability_discovery as
+                | CapabilityDiscoveryMode
+                | undefined) ?? current.capabilities.discovery,
+          },
           suggestions: {
             enabled: suggestionsEnabled,
             ...(model ? { model } : {}),
@@ -391,7 +417,7 @@ export default function openPiSetup(pi: ExtensionAPI) {
         content: [
           {
             type: "text",
-            text: `Updated OpenPI setup. ${text}${note}${manifestNote}`,
+            text: buildSetupSuccessText(text, `${note}${manifestNote}`),
           },
         ],
         details: config,
@@ -424,7 +450,7 @@ export default function openPiSetup(pi: ExtensionAPI) {
           "Current configuration:",
           currentConfiguration,
           "",
-          "Footer tips: presets are powerline, powerline-mono, compact; style is plain/powerline/powerline-mono; custom layouts use ui_footer_lines (2D enum arrays with optional flex). Do not use ui_footer_items together with ui_footer_lines. Built-in Agent role models (explorer, implementer, reviewer, advisor) are shared by subagent_spawn and workflow agent_type; they inherit the parent unless assigned an available registry model, and clearing an assignment restores inheritance. Custom agent-type files still override built-in role definitions. Nerd Font only affects powerline separator glyphs. Changes apply immediately in the active TUI session. Intercom installation is handled only by the native setup confirmation; do not install packages or edit its config yourself.",
+          "Capability discovery is explicit by default; adaptive is an opt-in that keeps only openpi_load_tools visible so the model may load useful groups. Footer tips: presets are powerline, powerline-mono, compact; style is plain/powerline/powerline-mono; custom layouts use ui_footer_lines (2D enum arrays with optional flex). Do not use ui_footer_items together with ui_footer_lines. Built-in Agent role models (explorer, implementer, reviewer, advisor) are shared by subagent_spawn and workflow agent_type; they inherit the parent unless assigned an available registry model, and clearing an assignment restores inheritance. Custom agent-type files still override built-in role definitions. Nerd Font only affects powerline separator glyphs. Changes apply immediately in the active TUI session. Intercom installation is handled only by the native setup confirmation; do not install packages or edit its config yourself.",
           "",
           "Extension load groups: all (24 extensions, default), core-runtime (drops ask-user/context-pivot), core (system+setup+core only). Switching groups rewrites the OpenPI package manifest's pi.extensions list and takes effect after /reload.",
           "",
@@ -437,8 +463,9 @@ export default function openPiSetup(pi: ExtensionAPI) {
           savedConfigExists,
         });
 
-    showConfigureTool(pi);
     episode = "armed";
+    showConfigureTool(pi);
+    publishEpisode();
     pi.sendUserMessage(
       prompt.join("\n"),
       ctx.isIdle() ? undefined : { deliverAs: "followUp" },

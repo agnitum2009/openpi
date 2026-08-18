@@ -28,6 +28,10 @@ import type {
 import { Type } from "typebox";
 import { loadSetupConfig } from "../shared/setup-config.ts";
 import { sanitizeTerminalText } from "../shared/terminal-text.ts";
+import {
+  OPENPI_TOOL_SURFACE,
+  patchOwnedTools,
+} from "../shared/tool-surface.ts";
 import type { TerminalSnapshot } from "./src/domain.ts";
 import {
   MAX_PENDING,
@@ -98,6 +102,14 @@ export default function (pi: ExtensionAPI) {
   let startReservations = 0;
   const resultDelivery =
     createDeferredResultDelivery<TerminalSnapshot>(MAX_PENDING);
+  const hideLifecycleTools = () =>
+    patchOwnedTools(pi, "background", {
+      disable: OPENPI_TOOL_SURFACE.background.deferred,
+    });
+  const showLifecycleTools = () =>
+    patchOwnedTools(pi, "background", {
+      enable: OPENPI_TOOL_SURFACE.background.deferred,
+    });
   /** Active bg_watch disarm callbacks, keyed by terminal id (one per id). */
   const watchers = new Map<string, () => void>();
 
@@ -298,6 +310,7 @@ export default function (pi: ExtensionAPI) {
   };
 
   pi.on("session_start", (_event, ctx) => {
+    hideLifecycleTools();
     sessionContext = ctx;
     if (ctx.hasUI) ui = ctx.ui;
   });
@@ -427,6 +440,8 @@ export default function (pi: ExtensionAPI) {
       } finally {
         startReservations--;
       }
+
+      showLifecycleTools();
 
       return {
         content: [{ type: "text", text: buildStartResult(snap) }],

@@ -74,9 +74,11 @@ test("the public OpenPI package has complete gallery and registry metadata", () 
     url: "https://github.com/tt-a1i/openpi/issues",
   });
   assert.deepEqual(manifest.pi?.extensions, [
+    "./extensions/capabilities/index.ts",
     "./extensions/commit-task-sync/index.ts",
     "./extensions/copy-all/index.ts",
     "./extensions/cron/index.ts",
+    "./extensions/execution-convergence/index.ts",
     "./extensions/file-mutation-display/index.ts",
     "./extensions/file-search/index.ts",
     "./extensions/git-info/index.ts",
