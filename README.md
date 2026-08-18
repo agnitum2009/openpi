@@ -5,12 +5,12 @@
 <h1 align="center">OpenPI</h1>
 
 <p align="center">
-  <strong>Small harness. Deep extensions. Clean context.</strong>
+  <strong>Pi at the core. Power on demand.</strong>
 </p>
 
 <p align="center">
-  给 <a href="https://pi.dev">Pi</a> 加一层可靠运行时：后台执行、隔离 Subagent、可恢复 Workflow、持续任务与可观测终端。<br />
-  不替换 Pi，不替你选模型，也不把另一套 Agent 平台塞进来。
+  默认像 <a href="https://pi.dev">Pi</a> 一样轻；任务需要时，一句话展开后台执行、隔离 Subagent、可恢复 Workflow 与持续任务。<br />
+  不替换 Pi，不重写 Agent loop，不让高级能力长期占据每一次对话。
 </p>
 
 <p align="center">
@@ -23,6 +23,7 @@
 
 <p align="center">
   <a href="#30-秒开始"><strong>30 秒开始</strong></a> ·
+  <a href="#默认轻按需强">设计</a> ·
   <a href="#openpi-解决什么">解决什么</a> ·
   <a href="#能力地图">能力地图</a> ·
   <a href="#运行模型">运行模型</a> ·
@@ -35,6 +36,27 @@
 <p align="center">
   <sub>OpenPI 是独立社区项目，与 Physical Intelligence 的 openpi 机器人项目及 Pi 官方均无关联。</sub>
 </p>
+
+---
+
+## 默认轻，按需强
+
+**OpenPI 最强的地方，不是工具多，而是复杂度只在值得的时候出现。**
+
+普通编码任务继续走 Pi 原生路径：`read`、`bash`、`edit`、`write`，完整历史、Session compaction、工具输出边界、显式 Bash timeout 与 Provider loop。OpenPI 不额外投影历史，不改写测试超时，也不向模型塞恢复提示；只保留独立的工作区删除保护。
+
+任务一旦需要长期进程、并行调研、隔离实现、多阶段协作或跨回合推进，高级能力仍然完整存在。用户直接提出需求，OpenPI 就在当轮加载对应能力；没用到的能力不会常驻模型工具面。
+
+> **轻路径不缴复杂度税，重任务不缺工程能力。** 这不是一套替代 Pi 的 Agent Runtime，而是一组遵守 Pi 生命周期、Session、Provider、模型与 Trust 边界的 Pi-native 深扩展。
+
+| 使用场景                     | 模型看到什么                                      | OpenPI 的行为                                     |
+| ---------------------------- | ------------------------------------------------- | ------------------------------------------------- |
+| 普通编码任务                 | Pi 原生 `read` / `bash` / `edit` / `write`        | 默认不常驻任何 OpenPI 模型工具                    |
+| 用户明确要求委派或高级能力   | 仅与意图匹配的能力组                              | 在当轮开始前直接加载，不要求用户记住工具名        |
+| 用户主动开启 `adaptive`      | 一个小型 `openpi_load_tools` 网关                 | 主模型判断确有收益时，可自主加载一个能力组        |
+| 后台任务或子 Agent 已经运行  | 对应的状态、等待、继续与停止工具                  | 管理面随真实资源出现，资源结束后按生命周期收敛    |
+
+这套设计保住了两件通常很难同时拥有的东西：Pi 的清爽基本面，以及完整工程工作台的能力上限。
 
 ---
 
