@@ -27,6 +27,12 @@ runtime.getActiveTools = () => activeTools;
 runtime.setActiveTools = (names) => {
   activeTools = Array.isArray(names) ? [...names] : activeTools;
 };
+// The OpenPI tool-surface owner projection also reads the full tool list to
+// decide which owned tools actually exist in this session; without a stub the
+// uninitialized loader throws and every capability load looks broken.
+let registeredTools = [];
+runtime.getAllTools = () =>
+  registeredTools.map((name) => ({ name, sourceInfo: undefined }));
 runtime.refreshTools = () => {};
 const { extensions, errors } = await loadExtensions(
   [extPath],
@@ -39,6 +45,7 @@ if (errors.length) {
   process.exit(1);
 }
 const ext = extensions[0];
+registeredTools = [...(ext.tools?.keys() ?? [])];
 // Fire session_start like the measure script does: extensions that defer
 // initialization to the first session (e.g. pi-mcp-adapter) get a chance to
 // initialize before the tool call.

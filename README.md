@@ -401,7 +401,7 @@ macOS/Linux arm64 与 x64 缺少二进制时，OpenPI 会从官方 Release 下�
 | Dashboard Footer             | 开启；单行 `powerline`                         |
 | Subagent / Bash / Write/Edit | `full` / `compact` / `compact`                 |
 | Post-edit 命令               | 关闭；单条命令最多 500 字符                    |
-| 扩展加载组                   | `all`（24 个扩展）；`core-runtime` / `core` 可选，切换后 `/reload` 生效 |
+| 扩展加载组                   | `all`（26 个扩展）；`core-runtime` / `core` 可选，切换后 `/reload` 生效 |
 | 内置角色模型                 | 全部继承父模型                                 |
 | pi-intercom                  | 不静默安装；由用户明确选择                     |
 | 主题                         | 保留用户现有选择                               |
