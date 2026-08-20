@@ -5,6 +5,7 @@ import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import type { SubagentSnapshot } from "./src/domain.ts";
 import {
+  SPINNER_INTERVAL_MS,
   TranscriptRenderer,
   buildTranscriptLines,
   sanitizeText,
@@ -173,8 +174,8 @@ test("bash tool calls use shell prompts while other tools keep arrow form", () =
     ),
   );
 
-  assert.match(rendered, /^\$ git status --porcelain/m);
-  assert.match(rendered, /→ read src\/index\.ts/);
+  assert.match(rendered, /^· \$ git status --porcelain/m);
+  assert.match(rendered, /· → read src\/index\.ts/);
 });
 
 test("adjacent tool results form one block with a success glyph", () => {
@@ -205,7 +206,8 @@ test("adjacent tool results form one block with a success glyph", () => {
     theme,
   );
 
-  assert.deepEqual(lines, ["$ printf ok", "  ✓ ok"]);
+  // One glyph per execution, on the command line; the output sits under it.
+  assert.deepEqual(lines, ["✓ $ printf ok", "    ok"]);
   assert.ok(!lines.slice(0, -1).some((line) => line === ""));
 });
 
@@ -234,13 +236,29 @@ test("tool errors and empty results use status glyphs", () => {
     ),
   );
 
-  assert.match(rendered, /✗ command failed/);
-  assert.match(rendered, /✓ \(no output\)/);
+  // Orphan results (no call above them) keep a glyph of their own.
+  assert.match(rendered, /✗ → bash/);
+  assert.match(rendered, /command failed/);
+  assert.match(rendered, /✓ → bash/);
 });
 
-test("running live tools keep the settled body shape", () => {
+test("a running tool becomes settled without reflowing", () => {
+  const call = {
+    kind: "assistant" as const,
+    parts: [
+      {
+        type: "toolCall" as const,
+        toolId: "live-1",
+        name: "bash",
+        argsPreview: '{"command":"git status"}',
+      },
+    ],
+  };
+  // Production order: the assistant message (with the call) lands in the
+  // transcript before tool_execution_start, so both sources describe one tool.
   const running = buildTranscriptLines(
     snapshot({
+      transcript: [call],
       liveTools: [
         {
           toolId: "live-1",
@@ -257,13 +275,14 @@ test("running live tools keep the settled body shape", () => {
   );
   const settled = buildTranscriptLines(
     snapshot({
-      liveTools: [
+      transcript: [
+        call,
         {
+          kind: "toolResult",
           toolId: "live-1",
           name: "bash",
-          argsPreview: '{"command":"git status"}',
+          isError: false,
           outputPreview: "clean",
-          done: true,
         },
       ],
     }),
@@ -273,12 +292,82 @@ test("running live tools keep the settled body shape", () => {
     { now: 0 },
   );
 
-  // The body never reflows on settle: only the leading glyph changes, and a
-  // still-running tool's partial output must not claim success yet.
-  assert.deepEqual(running, ["⠋ $ git status", "  · clean"]);
-  assert.deepEqual(settled, ["✓ $ git status", "  ✓ clean"]);
+  // The command appears exactly once while running, and only the glyph changes
+  // when the tool settles: same line count, same columns.
+  assert.deepEqual(running, ["⠋ $ git status", "    clean"]);
+  assert.deepEqual(settled, ["✓ $ git status", "    clean"]);
   assert.equal(running[0]?.slice(1), settled[0]?.slice(1));
-  assert.equal(running[1]?.slice(3), settled[1]?.slice(3));
+  assert.equal(running[1], settled[1]);
+});
+
+test("the spinner advances between frames instead of freezing in the cache", () => {
+  const renderer = new TranscriptRenderer();
+  const snap = snapshot({
+    transcript: [
+      {
+        kind: "assistant",
+        parts: [
+          {
+            type: "toolCall",
+            toolId: "live-1",
+            name: "bash",
+            argsPreview: '{"command":"sleep 1"}',
+          },
+        ],
+      },
+    ],
+    liveTools: [
+      { toolId: "live-1", name: "bash", argsPreview: '{"command":"sleep 1"}' },
+    ],
+  });
+
+  const first = renderer.render(snap, 80, theme, { now: 0 });
+  const later = renderer.render(snap, 80, theme, { now: SPINNER_INTERVAL_MS });
+  assert.notEqual(first[0], later[0]);
+  assert.equal(first[0]?.slice(1), later[0]?.slice(1));
+});
+
+test("cached items are keyed by width and by tool phase", () => {
+  const renderer = new TranscriptRenderer();
+  const call = {
+    kind: "assistant" as const,
+    parts: [
+      {
+        type: "toolCall" as const,
+        toolId: "call-1",
+        name: "bash",
+        argsPreview: '{"command":"printf a-very-long-command-name"}',
+      },
+    ],
+  };
+  const pending = snapshot({ transcript: [call] });
+  const wide = renderer.render(pending, 80, theme, { now: 0 });
+  const narrow = renderer.render(pending, 24, theme, { now: 0 });
+  assert.ok(wide.every((line) => visibleWidth(line) <= 80));
+  assert.ok(narrow.every((line) => visibleWidth(line) <= 24));
+  assert.notDeepEqual(wide, narrow);
+
+  // The same item re-renders once its result lands: a width-only cache key
+  // would serve the stale pending glyph forever.
+  const settled = renderer.render(
+    snapshot({
+      transcript: [
+        call,
+        {
+          kind: "toolResult",
+          toolId: "call-1",
+          name: "bash",
+          isError: false,
+          outputPreview: "a",
+        },
+      ],
+    }),
+    80,
+    theme,
+    { now: 0 },
+  );
+  assert.match(wide[0]!, /^·/);
+  assert.match(settled[0]!, /^✓/);
 });
 
 test("spinnerFrame is deterministic and advances every 120ms", () => {

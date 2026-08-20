@@ -55,23 +55,33 @@ function statusGlyph(
   }
 }
 
+/**
+ * Tool names come from the child's own tool-call events, so they are as
+ * untrusted as their arguments and must be sanitized before reaching the
+ * terminal: `truncateToWidth` only ignores escape sequences while measuring.
+ */
 function runningActivity(snap: SubagentSnapshot) {
   if (snap.status !== "running") return "";
   const liveTool = snap.liveTools.at(-1);
   if (liveTool) {
+    const name = sanitizeSubagentDisplayLine(liveTool.name);
     const args = truncateToWidth(
       sanitizeSubagentDisplayLine(liveTool.argsPreview ?? ""),
       48,
     );
-    return args ? `${liveTool.name} · ${args}` : liveTool.name;
+    return args ? `${name} · ${args}` : name;
   }
   for (const item of [...snap.transcript].reverse()) {
-    if (item.kind === "toolResult") return item.name;
+    if (item.kind === "toolResult") {
+      return sanitizeSubagentDisplayLine(item.name);
+    }
     if (item.kind !== "assistant") continue;
     const tool = [...item.parts]
       .reverse()
       .find((part) => part.type === "toolCall");
-    if (tool?.type === "toolCall") return tool.name;
+    if (tool?.type === "toolCall") {
+      return sanitizeSubagentDisplayLine(tool.name);
+    }
   }
   return "";
 }
@@ -271,6 +281,8 @@ export class SubagentDashboard implements Component {
     const subs = this.subs();
     reconcileDashboardSelection(this.selection, subs);
 
+    // One timestamp per frame so every row's spinner shows the same frame.
+    const now = Date.now();
     const rows = this.tui.terminal.rows || 30;
     const maxBodyHeight = Math.max(1, rows - 5);
     const bodyHeight =
@@ -296,7 +308,7 @@ export class SubagentDashboard implements Component {
     );
 
     const divider = theme.fg("border", "│");
-    const rowLines = this.renderRows(subs, innerWidth, bodyHeight);
+    const rowLines = this.renderRows(subs, innerWidth, bodyHeight, now);
     for (const row of rowLines) {
       lines.push(divider + this.pad(row, innerWidth) + divider);
     }
@@ -326,6 +338,7 @@ export class SubagentDashboard implements Component {
     subs: ReadonlyArray<SubagentSnapshot>,
     width: number,
     height: number,
+    now: number,
   ): string[] {
     const theme = this.theme;
     const out: string[] = [];
@@ -355,7 +368,7 @@ export class SubagentDashboard implements Component {
         ? theme.fg("accent", safeTitle)
         : theme.fg("text", safeTitle);
       const activity = runningActivity(snap);
-      const prefix = ` ${marker} ${statusGlyph(snap, theme)} `;
+      const prefix = ` ${marker} ${statusGlyph(snap, theme, now)} `;
 
       const utilization = formatContextUtilization(snap.usage);
       const metadata = [

@@ -172,7 +172,9 @@ function renderThinking(theme: Theme, text: string, width: number) {
 function renderToolBody(theme: Theme, name: string, argsPreview?: string) {
   const toolName = sanitizeText(name);
   const preview = summarizeToolArgs(toolName, argsPreview);
-  if (toolName === "bash") return theme.fg("dim", `$ ${preview ?? ""}`);
+  // The `$` form only earns its prompt when there is a command to show; a bare
+  // `$ ` would read as an empty shell line.
+  if (toolName === "bash" && preview) return theme.fg("dim", `$ ${preview}`);
   return (
     theme.fg("dim", "→ ") +
     theme.fg("toolTitle", toolName) +
@@ -189,32 +191,60 @@ function firstOutputPreview(outputPreview?: string) {
 }
 
 /**
- * `settled: false` marks partial output from a tool that is still running: a
- * success glyph there would claim an outcome the tool has not reached yet.
+ * One execution owns exactly one glyph column, on its command line. Output
+ * lines are plain indented text so a block keeps identical columns from the
+ * moment the command starts to the moment it settles.
  */
-function renderResultLine(
+export type ToolPhase = "live" | "ok" | "error" | "pending";
+
+function phaseGlyph(theme: Theme, phase: ToolPhase, now: number) {
+  switch (phase) {
+    case "live":
+      return theme.fg("warning", spinnerFrame(now));
+    case "ok":
+      return theme.fg("success", "✓");
+    case "error":
+      return theme.fg("error", "✗");
+    case "pending":
+      return theme.fg("dim", "·");
+  }
+}
+
+/** Command line: `<glyph> $ cmd` for bash, `<glyph> → name args` otherwise. */
+function renderToolLine(
+  theme: Theme,
+  phase: ToolPhase,
+  name: string,
+  argsPreview: string | undefined,
+  width: number,
+  now: number,
+) {
+  return truncateToWidth(
+    `${phaseGlyph(theme, phase, now)} ${renderToolBody(theme, name, argsPreview)}`,
+    width,
+  );
+}
+
+/** Output line: indented under the command, no second glyph. */
+function renderOutputLine(
   theme: Theme,
   isError: boolean,
   outputPreview: string,
   width: number,
-  settled = true,
 ) {
-  const glyph = isError
-    ? theme.fg("error", "✗")
-    : settled
-      ? theme.fg("success", "✓")
-      : theme.fg("dim", "·");
   const preview = outputPreview || "(no output)";
   const content = isError
     ? theme.fg(outputPreview ? "error" : "dim", preview)
     : theme.fg("dim", preview);
-  return truncateToWidth(`  ${glyph} ${content}`, width);
+  return truncateToWidth(`    ${content}`, width);
 }
 
 function renderAssistantItem(
   theme: Theme,
   item: Extract<TranscriptItem, { kind: "assistant" }>,
   width: number,
+  phases: ReadonlyMap<string, ToolPhase>,
+  now: number,
 ) {
   const out: string[] = [];
   for (const part of item.parts) {
@@ -229,11 +259,13 @@ function renderAssistantItem(
         ),
       );
     } else if (part.type === "toolCall") {
+      const phase = phases.get(part.toolId) ?? "pending";
+      // A live tool is rendered by the live block, which owns the spinner and
+      // the streaming output; rendering the call here too would show the same
+      // command twice and make the block reflow when the tool settles.
+      if (phase === "live") continue;
       out.push(
-        truncateToWidth(
-          renderToolBody(theme, part.name, part.argsPreview),
-          width,
-        ),
+        renderToolLine(theme, phase, part.name, part.argsPreview, width, now),
       );
     }
   }
@@ -244,15 +276,28 @@ function renderToolResultItem(
   theme: Theme,
   item: Extract<TranscriptItem, { kind: "toolResult" }>,
   width: number,
+  paired: boolean,
+  now: number,
 ) {
-  return [
-    renderResultLine(
-      theme,
-      item.isError,
-      firstOutputPreview(item.outputPreview),
-      width,
-    ),
-  ];
+  const preview = firstOutputPreview(item.outputPreview);
+  // An orphan result (its call is not the previous item) still needs a glyph:
+  // there is no command line above it to carry one.
+  if (!paired) {
+    return [
+      renderToolLine(
+        theme,
+        item.isError ? "error" : "ok",
+        item.name,
+        undefined,
+        width,
+        now,
+      ),
+      ...(preview
+        ? [renderOutputLine(theme, item.isError, preview, width)]
+        : []),
+    ];
+  }
+  return [renderOutputLine(theme, item.isError, preview, width)];
 }
 
 function isPairedToolResult(
@@ -274,10 +319,74 @@ function renderTranscriptItem(
   theme: Theme,
   item: TranscriptItem,
   width: number,
+  context: ItemContext,
+  now: number,
 ) {
   if (item.kind === "user") return renderUserText(theme, item.text, width);
-  if (item.kind === "assistant") return renderAssistantItem(theme, item, width);
-  return renderToolResultItem(theme, item, width);
+  if (item.kind === "assistant") {
+    return renderAssistantItem(theme, item, width, context.phases, now);
+  }
+  return renderToolResultItem(theme, item, width, context.paired, now);
+}
+
+interface ItemContext {
+  readonly phases: ReadonlyMap<string, ToolPhase>;
+  readonly paired: boolean;
+  /** Cache discriminator: identity plus width is not enough on its own. */
+  readonly token: string;
+}
+
+/**
+ * An item's rendering depends on its neighbours (does a call have its result
+ * yet?) and on live state (is the call still running?), so the cache key has to
+ * carry that context or a stale glyph would outlive the phase it described.
+ */
+function itemContext(
+  transcript: ReadonlyArray<TranscriptItem>,
+  index: number,
+  liveIds: ReadonlySet<string>,
+): ItemContext {
+  const item = transcript[index]!;
+  if (item.kind === "user")
+    return { phases: new Map(), paired: false, token: "" };
+  if (item.kind === "toolResult") {
+    const paired = isPairedToolResult(transcript[index - 1], item);
+    return { phases: new Map(), paired, token: paired ? "p" : "o" };
+  }
+
+  const phases = new Map<string, ToolPhase>();
+  for (const part of item.parts) {
+    if (part.type !== "toolCall") continue;
+    if (liveIds.has(part.toolId)) {
+      phases.set(part.toolId, "live");
+      continue;
+    }
+    const result = findResult(transcript, index, part.toolId);
+    phases.set(
+      part.toolId,
+      result ? (result.isError ? "error" : "ok") : "pending",
+    );
+  }
+  return {
+    phases,
+    paired: false,
+    token: [...phases].map(([id, phase]) => `${id}:${phase}`).join(","),
+  };
+}
+
+/** The result for a call, if it has already landed later in the transcript. */
+function findResult(
+  transcript: ReadonlyArray<TranscriptItem>,
+  callIndex: number,
+  toolId: string,
+) {
+  for (let index = callIndex + 1; index < transcript.length; index++) {
+    const candidate = transcript[index];
+    if (candidate?.kind === "toolResult" && candidate.toolId === toolId) {
+      return candidate;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -286,7 +395,7 @@ function renderTranscriptItem(
  * from their component's invalidate() when Pi changes theme.
  */
 export class TranscriptRenderer {
-  private itemCache = new WeakMap<TranscriptItem, Map<number, string[]>>();
+  private itemCache = new WeakMap<TranscriptItem, Map<string, string[]>>();
 
   render(
     snap: SubagentSnapshot,
@@ -296,18 +405,22 @@ export class TranscriptRenderer {
   ) {
     const out: string[] = [];
     const now = options?.now ?? Date.now();
+    const liveIds = new Set(snap.liveTools.map((tool) => tool.toolId));
 
     for (let index = 0; index < snap.transcript.length; index++) {
       const item = snap.transcript[index];
-      const cached = this.itemCache.get(item)?.get(width);
-      const lines = cached ?? renderTranscriptItem(theme, item, width);
+      const context = itemContext(snap.transcript, index, liveIds);
+      const key = `${width}|${context.token}`;
+      const cached = this.itemCache.get(item)?.get(key);
+      const lines =
+        cached ?? renderTranscriptItem(theme, item, width, context, now);
       if (!cached) {
-        const widths = this.itemCache.get(item) ?? new Map<number, string[]>();
+        const widths = this.itemCache.get(item) ?? new Map<string, string[]>();
         if (widths.size >= MAX_CACHED_WIDTHS_PER_ITEM) {
           const oldestWidth = widths.keys().next().value;
           if (oldestWidth !== undefined) widths.delete(oldestWidth);
         }
-        widths.set(width, lines);
+        widths.set(key, lines);
         this.itemCache.set(item, widths);
       }
       if (lines.length > 0) {
@@ -332,25 +445,22 @@ export class TranscriptRenderer {
       if (out.length === before + 1) out.pop();
     }
 
-    // Live tool executions (present until the ToolEnd lands in the transcript).
+    // Live tool executions. The manager drops a live entry when its ToolEnd
+    // lands, and the transcript's call line then takes over with the settled
+    // glyph in the same column, so the block never reflows.
     for (const tool of snap.liveTools) {
       if (out.length > 0) out.push("");
-      const marker = tool.done
+      const phase: ToolPhase = tool.done
         ? tool.isError
-          ? theme.fg("error", "✗")
-          : theme.fg("success", "✓")
-        : theme.fg("warning", spinnerFrame(now));
+          ? "error"
+          : "ok"
+        : "live";
       out.push(
-        truncateToWidth(
-          `${marker} ${renderToolBody(theme, tool.name, tool.argsPreview)}`,
-          width,
-        ),
+        renderToolLine(theme, phase, tool.name, tool.argsPreview, width, now),
       );
       const preview = firstOutputPreview(tool.outputPreview);
       if (preview)
-        out.push(
-          renderResultLine(theme, !!tool.isError, preview, width, !!tool.done),
-        );
+        out.push(renderOutputLine(theme, !!tool.isError, preview, width));
     }
 
     // Queued steering/follow-up messages: show them immediately so Enter
