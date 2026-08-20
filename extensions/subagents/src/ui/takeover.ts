@@ -17,7 +17,12 @@ import { sanitizeTerminalText } from "../../../shared/terminal-text.ts";
 import { formatElapsed, type SubagentSnapshot } from "../domain.ts";
 import { formatContextUtilization } from "../format.ts";
 import type { SubagentReadModel } from "../manager.ts";
-import { TranscriptRenderer, buildTranscriptLines } from "./transcript.ts";
+import {
+  SPINNER_INTERVAL_MS,
+  TranscriptRenderer,
+  buildTranscriptLines,
+  spinnerFrame,
+} from "./transcript.ts";
 
 export function sanitizeSubagentDisplayLine(value: string) {
   return sanitizeTerminalText(value).replace(/\s+/g, " ").trim();
@@ -30,18 +35,19 @@ function configuredKeys(
   return keybindings.getKeys(binding).join("/") || "unbound";
 }
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const SPINNER_INTERVAL_MS = 120;
-
-function statusGlyph(snap: SubagentSnapshot, theme: Theme): string {
+/**
+ * One spinner definition for the whole subagent UI: the dashboard glyph, the
+ * takeover header, and the transcript's live tools must animate in step, so the
+ * frames and their cadence live in `transcript.ts` and are imported here.
+ */
+function statusGlyph(
+  snap: SubagentSnapshot,
+  theme: Theme,
+  now = Date.now(),
+): string {
   switch (snap.status) {
     case "running":
-      return theme.fg(
-        "warning",
-        SPINNER_FRAMES[
-          Math.floor(Date.now() / SPINNER_INTERVAL_MS) % SPINNER_FRAMES.length
-        ],
-      );
+      return theme.fg("warning", spinnerFrame(now));
     case "done":
       return theme.fg("success", "✓");
     case "error":
@@ -578,6 +584,7 @@ export class TakeoverView implements Component, Focusable {
 
   render(width: number): string[] {
     const theme = this.theme;
+    const now = Date.now();
     const lines: string[] = [];
     const snap = this.snap();
 
@@ -594,7 +601,7 @@ export class TakeoverView implements Component, Focusable {
     const title = sanitizeSubagentDisplayLine(snap.title) || snap.id;
     const headerLeft =
       theme.fg("borderAccent", "─ ") +
-      statusGlyph(snap, theme) +
+      statusGlyph(snap, theme, now) +
       " " +
       theme.fg("accent", theme.bold(title)) +
       theme.fg("borderAccent", " ");
@@ -630,11 +637,13 @@ export class TakeoverView implements Component, Focusable {
 
     // Fixed-height transcript viewport. Errors consume a row, but scroll state
     // is represented by the following rule so its height never changes.
+    // `now` is shared with the header glyph so both spinners show one frame.
     const transcript = buildTranscriptLines(
       snap,
       width,
       theme,
       this.transcriptRenderer,
+      { now },
     );
     const viewport = this.viewportHeight();
     const errorRows = snap.errorText ? 1 : 0;

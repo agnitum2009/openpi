@@ -273,9 +273,12 @@ test("running live tools keep the settled body shape", () => {
     { now: 0 },
   );
 
-  assert.equal(running[0], "⠋ $ git status");
+  // The body never reflows on settle: only the leading glyph changes, and a
+  // still-running tool's partial output must not claim success yet.
+  assert.deepEqual(running, ["⠋ $ git status", "  · clean"]);
   assert.deepEqual(settled, ["✓ $ git status", "  ✓ clean"]);
-  assert.equal(running[1], settled[1]);
+  assert.equal(running[0]?.slice(1), settled[0]?.slice(1));
+  assert.equal(running[1]?.slice(3), settled[1]?.slice(3));
 });
 
 test("spinnerFrame is deterministic and advances every 120ms", () => {

@@ -31,8 +31,11 @@ export const SPINNER_FRAMES = [
   "⠏",
 ] as const;
 
+/** Frame cadence, shared with the dashboard and takeover headers. */
+export const SPINNER_INTERVAL_MS = 120;
+
 export function spinnerFrame(now: number) {
-  const frame = Math.floor(now / 120) % SPINNER_FRAMES.length;
+  const frame = Math.floor(now / SPINNER_INTERVAL_MS) % SPINNER_FRAMES.length;
   return SPINNER_FRAMES[
     (frame + SPINNER_FRAMES.length) % SPINNER_FRAMES.length
   ];
@@ -185,13 +188,22 @@ function firstOutputPreview(outputPreview?: string) {
   );
 }
 
+/**
+ * `settled: false` marks partial output from a tool that is still running: a
+ * success glyph there would claim an outcome the tool has not reached yet.
+ */
 function renderResultLine(
   theme: Theme,
   isError: boolean,
   outputPreview: string,
   width: number,
+  settled = true,
 ) {
-  const glyph = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
+  const glyph = isError
+    ? theme.fg("error", "✗")
+    : settled
+      ? theme.fg("success", "✓")
+      : theme.fg("dim", "·");
   const preview = outputPreview || "(no output)";
   const content = isError
     ? theme.fg(outputPreview ? "error" : "dim", preview)
@@ -336,7 +348,9 @@ export class TranscriptRenderer {
       );
       const preview = firstOutputPreview(tool.outputPreview);
       if (preview)
-        out.push(renderResultLine(theme, !!tool.isError, preview, width));
+        out.push(
+          renderResultLine(theme, !!tool.isError, preview, width, !!tool.done),
+        );
     }
 
     // Queued steering/follow-up messages: show them immediately so Enter
