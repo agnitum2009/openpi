@@ -11,6 +11,7 @@ import {
   reconcileDashboardSelection,
   sanitizeSubagentDisplayLine,
   SubagentDashboard,
+  TakeoverView,
   type DashboardSelection,
 } from "./src/ui/takeover.ts";
 
@@ -164,6 +165,64 @@ test("dashboard uses one status glyph and reports live activity", () => {
     assert.doesNotMatch(output, /agent run.*running/);
     assert.match(output, /✓ agent done/);
     assert.match(output, /✗ agent bad/);
+  } finally {
+    view.dispose();
+  }
+});
+
+test("chrome rows stay width-bounded and takeover uses three rules", () => {
+  const running = snap("run", "running", {
+    title: "a very long title for a very narrow terminal",
+    liveTools: [{ toolId: "1", name: "Bash", argsPreview: "git status" }],
+  });
+  const list = model([running]);
+  const pick = new SubagentDashboard(
+    tui(),
+    theme,
+    keys,
+    list,
+    { index: 0 },
+    () => {},
+  );
+  const takeover = new TakeoverView(tui(), theme, keys, "run", list, () => {});
+  try {
+    for (const lines of [pick.render(30), takeover.render(30)]) {
+      for (const line of lines) assert.ok(visibleWidth(line) <= 30, line);
+    }
+    assert.equal(
+      takeover.render(80).filter((line) => line.includes("─")).length,
+      3,
+    );
+  } finally {
+    pick.dispose();
+    takeover.dispose();
+  }
+});
+
+test("takeover scroll indicator lives in its rule without changing overlay height", () => {
+  const transcript = Array.from({ length: 40 }, (_, index) => ({
+    kind: "assistant" as const,
+    parts: [{ type: "text" as const, text: `output ${index}` }],
+  }));
+  const running = snap("run", "running", { transcript });
+  const view = new TakeoverView(
+    tui(20),
+    theme,
+    keys,
+    "run",
+    model([running]),
+    () => {},
+  );
+  try {
+    const pinned = view.render(80);
+    assert.equal(pinned.length, 19);
+    assert.doesNotMatch(pinned.join("\n"), /↓ \d+/);
+
+    view.handleInput("tui.editor.pageUp");
+    const scrolled = view.render(80);
+    assert.equal(scrolled.length, pinned.length);
+    assert.match(scrolled.join("\n"), /↓ \d+/);
+    assert.doesNotMatch(scrolled.join("\n"), /lines below/);
   } finally {
     view.dispose();
   }

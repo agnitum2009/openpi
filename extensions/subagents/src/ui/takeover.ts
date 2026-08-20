@@ -407,10 +407,11 @@ export class SubagentDashboard implements Component {
   invalidate(): void {}
 }
 
+// --- Takeover view ------------------------------------------------------------
 
 const TRANSCRIPT_SCROLL_STEP = 6;
 
-class TakeoverView implements Component, Focusable {
+export class TakeoverView implements Component, Focusable {
   private tui: TUI;
   private theme: Theme;
   private keybindings: KeybindingsManager;
@@ -425,7 +426,7 @@ class TakeoverView implements Component, Focusable {
   private scrollOffset = 0;
   private unsubscribe: () => void;
   private renderTimer?: ReturnType<typeof setTimeout>;
-  private ticker: ReturnType<typeof setInterval>;
+  private ticker?: ReturnType<typeof setInterval>;
   private closed = false;
 
   private _focused = false;
@@ -453,9 +454,11 @@ class TakeoverView implements Component, Focusable {
     this.view = view;
     this.done = done;
     this.options = options;
-    this.unsubscribe = view.subscribeTo(id, () => this.scheduleRender());
-    // Elapsed time in the header ticks along at 1Hz.
-    this.ticker = setInterval(() => this.tui.requestRender(), 1000);
+    this.unsubscribe = view.subscribeTo(id, () => {
+      this.refreshTicker();
+      this.scheduleRender();
+    });
+    this.refreshTicker();
     this.input.onSubmit = (value: string) => {
       const text = value.trim();
       if (!text) return;
@@ -468,6 +471,13 @@ class TakeoverView implements Component, Focusable {
 
   private snap(): SubagentSnapshot | undefined {
     return this.view.get(this.id);
+  }
+
+  private refreshTicker() {
+    const interval =
+      this.snap()?.status === "running" ? SPINNER_INTERVAL_MS : 1000;
+    if (this.ticker) clearInterval(this.ticker);
+    this.ticker = setInterval(() => this.tui.requestRender(), interval);
   }
 
   private scheduleRender() {
@@ -484,7 +494,7 @@ class TakeoverView implements Component, Focusable {
     if (this.closed) return false;
     this.closed = true;
     this.unsubscribe();
-    clearInterval(this.ticker);
+    if (this.ticker) clearInterval(this.ticker);
     if (this.renderTimer) clearTimeout(this.renderTimer);
     this.renderTimer = undefined;
     return true;
@@ -543,49 +553,83 @@ class TakeoverView implements Component, Focusable {
 
   private viewportHeight(): number {
     const rows = this.tui.terminal.rows || 30;
-    // The complete view renders viewport + 7 chrome rows. Using rows - 8
-    // makes the overlay exactly terminal rows - 1.
-    return Math.max(6, rows - 8);
+    // Top rule, transcript rule, input, key hints, and bottom rule are five
+    // chrome rows. The overlay leaves Pi's final footer row visible.
+    return Math.max(1, rows - 6);
+  }
+
+  private rule(width: number, left = "", right = "") {
+    const fill = "─";
+    const available = Math.max(1, width);
+    const leftWidth = visibleWidth(left);
+    const rightWidth = visibleWidth(right);
+    if (!right || leftWidth + rightWidth + 2 > available) {
+      return truncateToWidth(
+        left + fill.repeat(Math.max(0, available - leftWidth)),
+        available,
+      );
+    }
+    return (
+      left +
+      fill.repeat(Math.max(1, available - leftWidth - rightWidth)) +
+      right
+    );
   }
 
   render(width: number): string[] {
     const theme = this.theme;
-    const border = theme.fg("borderAccent", "─".repeat(Math.max(1, width)));
     const lines: string[] = [];
     const snap = this.snap();
 
     if (!snap) {
-      lines.push(border);
-      lines.push(theme.fg("dim", `${this.id} is no longer tracked`));
-      lines.push(border);
+      const border = theme.fg("borderAccent", "─".repeat(Math.max(1, width)));
+      lines.push(
+        border,
+        theme.fg("dim", `${this.id} is no longer tracked`),
+        border,
+      );
       return lines;
     }
 
-    lines.push(border);
+    const title = sanitizeSubagentDisplayLine(snap.title) || snap.id;
+    const headerLeft =
+      theme.fg("borderAccent", "─ ") +
+      statusGlyph(snap, theme) +
+      " " +
+      theme.fg("accent", theme.bold(title)) +
+      theme.fg("borderAccent", " ");
     const utilization = formatContextUtilization(snap.usage);
-    const header =
-      `${statusGlyph(snap, theme)} ` +
+    const metadata = [
+      ...(this.options?.badge
+        ? [theme.fg("muted", sanitizeSubagentDisplayLine(this.options.badge))]
+        : []),
       theme.fg(
-        "accent",
-        theme.bold(sanitizeSubagentDisplayLine(snap.title) || snap.id),
-      ) +
-      theme.fg("muted", ` · ${snap.status} · ${formatElapsed(snap)}`) +
-      (this.options?.badge
-        ? theme.fg(
-            "muted",
-            ` · ${sanitizeSubagentDisplayLine(this.options.badge)}`,
-          )
-        : "") +
-      theme.fg(
-        "dim",
-        ` · ${snap.backend}: ${sanitizeSubagentDisplayLine(snap.meta.modelLabel ?? "?") || "?"}`,
-      ) +
-      (utilization ? theme.fg("dim", ` · ${utilization}`) : "");
-    lines.push(truncateToWidth(header, width));
-    lines.push(border);
+        "muted",
+        sanitizeSubagentDisplayLine(snap.meta.modelLabel ?? "?") || "?",
+      ),
+      ...(utilization ? [theme.fg("muted", utilization)] : []),
+      theme.fg("muted", formatElapsed(snap)),
+    ];
+    const dot = theme.fg("dim", " · ");
+    while (
+      metadata.length > 1 &&
+      visibleWidth(headerLeft) + visibleWidth(metadata.join(dot)) + 2 > width
+    ) {
+      metadata.shift();
+    }
+    lines.push(
+      this.rule(
+        width,
+        truncateToWidth(
+          headerLeft,
+          Math.max(1, width - visibleWidth(metadata.join(dot)) - 2),
+        ),
+        metadata.join(dot),
+      ),
+    );
 
-    // Fixed-height transcript viewport. Error and scroll status consume rows
-    // inside the viewport so streaming/scrolling never changes overlay height.
+    // Fixed-height transcript viewport. Errors consume a row, but scroll state
+    // is represented by the following rule so its height never changes.
     const transcript = buildTranscriptLines(
       snap,
       width,
@@ -594,8 +638,7 @@ class TakeoverView implements Component, Focusable {
     );
     const viewport = this.viewportHeight();
     const errorRows = snap.errorText ? 1 : 0;
-    const scrollRows = this.scrollOffset > 0 ? 1 : 0;
-    const transcriptCapacity = Math.max(1, viewport - errorRows - scrollRows);
+    const transcriptCapacity = Math.max(1, viewport - errorRows);
     const maxOffset = Math.max(0, transcript.length - transcriptCapacity);
     if (this.scrollOffset > maxOffset) this.scrollOffset = maxOffset;
 
@@ -611,39 +654,33 @@ class TakeoverView implements Component, Focusable {
         ),
       );
     }
-
-    const capacity = Math.max(
-      1,
-      viewport - body.length - (this.scrollOffset > 0 ? 1 : 0),
-    );
     const end = transcript.length - this.scrollOffset;
-    const visible = transcript.slice(Math.max(0, end - capacity), end);
-    if (visible.length === 0) body.push(theme.fg("dim", "(no output yet)"));
+    const visible = transcript.slice(
+      Math.max(0, end - Math.max(1, viewport - body.length)),
+      end,
+    );
+    if (visible.length === 0) body.push(theme.fg("dim", "waiting for output…"));
     else body.push(...visible);
-
-    if (this.scrollOffset > 0) {
-      body.push(
-        truncateToWidth(
-          theme.fg("dim", `... ${this.scrollOffset} lines below · ↓/pgdn`),
-          width,
-        ),
-      );
-    }
     while (body.length < viewport) body.push("");
     lines.push(...body.slice(0, viewport));
 
-    lines.push(border);
+    lines.push(
+      this.rule(
+        width,
+        theme.fg("borderAccent", "─"),
+        this.scrollOffset > 0 ? theme.fg("dim", `↓ ${this.scrollOffset}`) : "",
+      ),
+    );
     lines.push(...this.input.render(width));
+    const hints = `${configuredKeys(this.keybindings, "tui.input.submit")} send · ${configuredKeys(this.keybindings, "app.interrupt")} back · ${configuredKeys(this.keybindings, "app.clear")} abort run · ${configuredKeys(this.keybindings, "tui.editor.cursorUp")}/${configuredKeys(this.keybindings, "tui.editor.cursorDown")} scroll · ${configuredKeys(this.keybindings, "tui.editor.pageUp")}/${configuredKeys(this.keybindings, "tui.editor.pageDown")} page`;
+    const compactHints = `${configuredKeys(this.keybindings, "tui.input.submit")} send · ${configuredKeys(this.keybindings, "app.interrupt")} back · ${configuredKeys(this.keybindings, "app.clear")} abort run · ${configuredKeys(this.keybindings, "tui.editor.cursorUp")}/${configuredKeys(this.keybindings, "tui.editor.cursorDown")} scroll`;
     lines.push(
       truncateToWidth(
-        theme.fg(
-          "dim",
-          `${configuredKeys(this.keybindings, "tui.input.submit")} send · ${configuredKeys(this.keybindings, "app.interrupt")} back · ${configuredKeys(this.keybindings, "app.clear")} abort run · ${configuredKeys(this.keybindings, "tui.editor.cursorUp")}/${configuredKeys(this.keybindings, "tui.editor.cursorDown")} scroll · ${configuredKeys(this.keybindings, "tui.editor.pageUp")}/${configuredKeys(this.keybindings, "tui.editor.pageDown")} page`,
-        ),
+        theme.fg("dim", visibleWidth(hints) <= width ? hints : compactHints),
         width,
       ),
     );
-    lines.push(border);
+    lines.push(this.rule(width, theme.fg("borderAccent", "─")));
     return lines;
   }
 
