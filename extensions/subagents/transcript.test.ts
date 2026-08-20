@@ -8,6 +8,7 @@ import {
   TranscriptRenderer,
   buildTranscriptLines,
   sanitizeText,
+  spinnerFrame,
   summarizeToolArgs,
 } from "./src/ui/transcript.ts";
 
@@ -143,6 +144,188 @@ test("tool calls summarize known bounded JSON arguments and safely fall back", (
   assert.equal(summarizeToolArgs("bash", '{"command":'), '{"command":');
 });
 
+test("bash tool calls use shell prompts while other tools keep arrow form", () => {
+  const rendered = plain(
+    buildTranscriptLines(
+      snapshot({
+        transcript: [
+          {
+            kind: "assistant",
+            parts: [
+              {
+                type: "toolCall",
+                toolId: "bash-1",
+                name: "bash",
+                argsPreview: '{"command":"git status --porcelain"}',
+              },
+              {
+                type: "toolCall",
+                toolId: "read-1",
+                name: "read",
+                argsPreview: '{"path":"src/index.ts"}',
+              },
+            ],
+          },
+        ],
+      }),
+      80,
+      theme,
+    ),
+  );
+
+  assert.match(rendered, /^\$ git status --porcelain/m);
+  assert.match(rendered, /→ read src\/index\.ts/);
+});
+
+test("adjacent tool results form one block with a success glyph", () => {
+  const lines = buildTranscriptLines(
+    snapshot({
+      transcript: [
+        {
+          kind: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              toolId: "call-1",
+              name: "bash",
+              argsPreview: '{"command":"printf ok"}',
+            },
+          ],
+        },
+        {
+          kind: "toolResult",
+          toolId: "call-1",
+          name: "bash",
+          isError: false,
+          outputPreview: "ok",
+        },
+      ],
+    }),
+    80,
+    theme,
+  );
+
+  assert.deepEqual(lines, ["$ printf ok", "  ✓ ok"]);
+  assert.ok(!lines.slice(0, -1).some((line) => line === ""));
+});
+
+test("tool errors and empty results use status glyphs", () => {
+  const rendered = plain(
+    buildTranscriptLines(
+      snapshot({
+        transcript: [
+          {
+            kind: "toolResult",
+            toolId: "error-1",
+            name: "bash",
+            isError: true,
+            outputPreview: "command failed",
+          },
+          {
+            kind: "toolResult",
+            toolId: "empty-1",
+            name: "bash",
+            isError: false,
+          },
+        ],
+      }),
+      80,
+      theme,
+    ),
+  );
+
+  assert.match(rendered, /✗ command failed/);
+  assert.match(rendered, /✓ \(no output\)/);
+});
+
+test("running live tools keep the settled body shape", () => {
+  const running = buildTranscriptLines(
+    snapshot({
+      liveTools: [
+        {
+          toolId: "live-1",
+          name: "bash",
+          argsPreview: '{"command":"git status"}',
+          outputPreview: "clean",
+        },
+      ],
+    }),
+    80,
+    theme,
+    undefined,
+    { now: 0 },
+  );
+  const settled = buildTranscriptLines(
+    snapshot({
+      liveTools: [
+        {
+          toolId: "live-1",
+          name: "bash",
+          argsPreview: '{"command":"git status"}',
+          outputPreview: "clean",
+          done: true,
+        },
+      ],
+    }),
+    80,
+    theme,
+    undefined,
+    { now: 0 },
+  );
+
+  assert.equal(running[0], "⠋ $ git status");
+  assert.deepEqual(settled, ["✓ $ git status", "  ✓ clean"]);
+  assert.equal(running[1], settled[1]);
+});
+
+test("spinnerFrame is deterministic and advances every 120ms", () => {
+  assert.equal(spinnerFrame(0), "⠋");
+  assert.equal(spinnerFrame(119), "⠋");
+  assert.equal(spinnerFrame(120), "⠙");
+  assert.equal(spinnerFrame(10 * 120), "⠋");
+});
+
+test("tool rendering keeps every line within a narrow width", () => {
+  const lines = buildTranscriptLines(
+    snapshot({
+      transcript: [
+        {
+          kind: "assistant",
+          parts: [
+            {
+              type: "toolCall",
+              toolId: "narrow-1",
+              name: "bash",
+              argsPreview: JSON.stringify({ command: "x".repeat(200) }),
+            },
+          ],
+        },
+        {
+          kind: "toolResult",
+          toolId: "narrow-1",
+          name: "bash",
+          isError: false,
+          outputPreview: "y".repeat(200),
+        },
+      ],
+      liveTools: [
+        {
+          toolId: "narrow-live",
+          name: "custom-tool",
+          argsPreview: JSON.stringify({ value: "z".repeat(200) }),
+          outputPreview: "w".repeat(200),
+        },
+      ],
+    }),
+    24,
+    theme,
+    undefined,
+    { now: 0 },
+  );
+
+  assert.ok(lines.every((line) => visibleWidth(line) <= 24));
+});
+
 test("cached finalized transcript output is rebuilt after invalidation", () => {
   const renderer = new TranscriptRenderer();
   const cached = snapshot({
@@ -169,15 +352,15 @@ test("cached finalized transcript output is rebuilt after invalidation", () => {
 
   assert.match(
     plain(buildTranscriptLines(cached, 80, taggedTheme("first"), renderer)),
-    /\[first:toolTitle\]bash/,
+    /\[first:dim\]\$ npm test/,
   );
   assert.match(
     plain(buildTranscriptLines(cached, 80, taggedTheme("second"), renderer)),
-    /\[first:toolTitle\]bash/,
+    /\[first:dim\]\$ npm test/,
   );
   renderer.invalidate();
   assert.match(
     plain(buildTranscriptLines(cached, 80, taggedTheme("second"), renderer)),
-    /\[second:toolTitle\]bash/,
+    /\[second:dim\]\$ npm test/,
   );
 });

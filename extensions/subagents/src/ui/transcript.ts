@@ -18,6 +18,26 @@ import type { SubagentSnapshot, TranscriptItem } from "../domain.ts";
 
 const MAX_CACHED_WIDTHS_PER_ITEM = 2;
 
+export const SPINNER_FRAMES = [
+  "⠋",
+  "⠙",
+  "⠹",
+  "⠸",
+  "⠼",
+  "⠴",
+  "⠦",
+  "⠧",
+  "⠇",
+  "⠏",
+] as const;
+
+export function spinnerFrame(now: number) {
+  const frame = Math.floor(now / 120) % SPINNER_FRAMES.length;
+  return SPINNER_FRAMES[
+    (frame + SPINNER_FRAMES.length) % SPINNER_FRAMES.length
+  ];
+}
+
 /**
  * Strip raw ANSI codes, expand tabs, and drop control chars. Terminal-expanded
  * tabs (and stray escapes) make lines wider than the width we declare to the
@@ -146,6 +166,39 @@ function renderThinking(theme: Theme, text: string, width: number) {
   return out;
 }
 
+function renderToolBody(theme: Theme, name: string, argsPreview?: string) {
+  const toolName = sanitizeText(name);
+  const preview = summarizeToolArgs(toolName, argsPreview);
+  if (toolName === "bash") return theme.fg("dim", `$ ${preview ?? ""}`);
+  return (
+    theme.fg("dim", "→ ") +
+    theme.fg("toolTitle", toolName) +
+    (preview ? theme.fg("dim", ` ${preview}`) : "")
+  );
+}
+
+function firstOutputPreview(outputPreview?: string) {
+  return (
+    sanitizeText(outputPreview ?? "")
+      .split("\n")
+      .find((line) => line.trim()) ?? ""
+  );
+}
+
+function renderResultLine(
+  theme: Theme,
+  isError: boolean,
+  outputPreview: string,
+  width: number,
+) {
+  const glyph = isError ? theme.fg("error", "✗") : theme.fg("success", "✓");
+  const preview = outputPreview || "(no output)";
+  const content = isError
+    ? theme.fg(outputPreview ? "error" : "dim", preview)
+    : theme.fg("dim", preview);
+  return truncateToWidth(`  ${glyph} ${content}`, width);
+}
+
 function renderAssistantItem(
   theme: Theme,
   item: Extract<TranscriptItem, { kind: "assistant" }>,
@@ -164,12 +217,12 @@ function renderAssistantItem(
         ),
       );
     } else if (part.type === "toolCall") {
-      const preview = summarizeToolArgs(part.name, part.argsPreview);
-      const line =
-        theme.fg("muted", "→ ") +
-        theme.fg("toolTitle", part.name) +
-        (preview ? theme.fg("dim", ` ${preview}`) : "");
-      out.push(truncateToWidth(line, width));
+      out.push(
+        truncateToWidth(
+          renderToolBody(theme, part.name, part.argsPreview),
+          width,
+        ),
+      );
     }
   }
   return out;
@@ -180,16 +233,29 @@ function renderToolResultItem(
   item: Extract<TranscriptItem, { kind: "toolResult" }>,
   width: number,
 ) {
-  const firstLine =
-    sanitizeText(item.outputPreview ?? "")
-      .split("\n")
-      .find((line) => line.trim()) ?? "";
-  const label = item.isError
-    ? theme.fg("error", "  error: ")
-    : theme.fg("dim", "  output: ");
   return [
-    truncateToWidth(label + theme.fg("dim", firstLine || "(no output)"), width),
+    renderResultLine(
+      theme,
+      item.isError,
+      firstOutputPreview(item.outputPreview),
+      width,
+    ),
   ];
+}
+
+function isPairedToolResult(
+  previous: TranscriptItem | undefined,
+  current: TranscriptItem,
+) {
+  if (
+    !previous ||
+    previous.kind !== "assistant" ||
+    current.kind !== "toolResult"
+  ) {
+    return false;
+  }
+  const lastPart = previous.parts[previous.parts.length - 1];
+  return lastPart?.type === "toolCall" && lastPart.toolId === current.toolId;
 }
 
 function renderTranscriptItem(
@@ -210,10 +276,17 @@ function renderTranscriptItem(
 export class TranscriptRenderer {
   private itemCache = new WeakMap<TranscriptItem, Map<number, string[]>>();
 
-  render(snap: SubagentSnapshot, width: number, theme: Theme) {
+  render(
+    snap: SubagentSnapshot,
+    width: number,
+    theme: Theme,
+    options?: { readonly now?: number },
+  ) {
     const out: string[] = [];
+    const now = options?.now ?? Date.now();
 
-    for (const item of snap.transcript) {
+    for (let index = 0; index < snap.transcript.length; index++) {
+      const item = snap.transcript[index];
       const cached = this.itemCache.get(item)?.get(width);
       const lines = cached ?? renderTranscriptItem(theme, item, width);
       if (!cached) {
@@ -225,7 +298,15 @@ export class TranscriptRenderer {
         widths.set(width, lines);
         this.itemCache.set(item, widths);
       }
-      if (lines.length > 0) out.push(...lines, "");
+      if (lines.length > 0) {
+        if (
+          out.length > 0 &&
+          !isPairedToolResult(snap.transcript[index - 1], item)
+        ) {
+          out.push("");
+        }
+        out.push(...lines);
+      }
     }
     while (out.length > 0 && out[out.length - 1] === "") out.pop();
 
@@ -244,14 +325,18 @@ export class TranscriptRenderer {
       if (out.length > 0) out.push("");
       const marker = tool.done
         ? tool.isError
-          ? theme.fg("error", "error")
-          : theme.fg("success", "done")
-        : theme.fg("warning", "running");
-      const args = summarizeToolArgs(tool.name, tool.argsPreview);
-      let line = `${theme.fg("toolTitle", tool.name)}${args ? theme.fg("dim", ` ${args}`) : ""} · ${marker}`;
-      const preview = tool.outputPreview && compactPreview(tool.outputPreview);
-      if (preview) line += theme.fg("dim", ` · ${preview}`);
-      out.push(truncateToWidth(line, width));
+          ? theme.fg("error", "✗")
+          : theme.fg("success", "✓")
+        : theme.fg("warning", spinnerFrame(now));
+      out.push(
+        truncateToWidth(
+          `${marker} ${renderToolBody(theme, tool.name, tool.argsPreview)}`,
+          width,
+        ),
+      );
+      const preview = firstOutputPreview(tool.outputPreview);
+      if (preview)
+        out.push(renderResultLine(theme, !!tool.isError, preview, width));
     }
 
     // Queued steering/follow-up messages: show them immediately so Enter
@@ -288,6 +373,12 @@ export function buildTranscriptLines(
   width: number,
   theme: Theme,
   renderer?: TranscriptRenderer,
+  options?: { readonly now?: number },
 ) {
-  return (renderer ?? new TranscriptRenderer()).render(snap, width, theme);
+  return (renderer ?? new TranscriptRenderer()).render(
+    snap,
+    width,
+    theme,
+    options,
+  );
 }
