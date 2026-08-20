@@ -30,26 +30,44 @@ function configuredKeys(
   return keybindings.getKeys(binding).join("/") || "unbound";
 }
 
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_INTERVAL_MS = 120;
+
 function statusGlyph(snap: SubagentSnapshot, theme: Theme): string {
   switch (snap.status) {
     case "running":
-      return theme.fg("warning", "■");
+      return theme.fg(
+        "warning",
+        SPINNER_FRAMES[
+          Math.floor(Date.now() / SPINNER_INTERVAL_MS) % SPINNER_FRAMES.length
+        ],
+      );
     case "done":
-      return theme.fg("success", "■");
+      return theme.fg("success", "✓");
     case "error":
-      return theme.fg("error", "■");
+      return theme.fg("error", "✗");
   }
 }
 
-function statusWord(snap: SubagentSnapshot, theme: Theme): string {
-  switch (snap.status) {
-    case "running":
-      return theme.fg("warning", "running");
-    case "done":
-      return theme.fg("success", "done");
-    case "error":
-      return theme.fg("error", "failed");
+function runningActivity(snap: SubagentSnapshot) {
+  if (snap.status !== "running") return "";
+  const liveTool = snap.liveTools.at(-1);
+  if (liveTool) {
+    const args = truncateToWidth(
+      sanitizeSubagentDisplayLine(liveTool.argsPreview ?? ""),
+      48,
+    );
+    return args ? `${liveTool.name} · ${args}` : liveTool.name;
   }
+  for (const item of [...snap.transcript].reverse()) {
+    if (item.kind === "toolResult") return item.name;
+    if (item.kind !== "assistant") continue;
+    const tool = [...item.parts]
+      .reverse()
+      .find((part) => part.type === "toolCall");
+    if (tool?.type === "toolCall") return tool.name;
+  }
+  return "";
 }
 
 // --- Entry points --------------------------------------------------------------
@@ -126,7 +144,7 @@ export function reconcileDashboardSelection(
   selection.id = subs[selection.index]?.id;
 }
 
-class SubagentDashboard implements Component {
+export class SubagentDashboard implements Component {
   private tui: TUI;
   private theme: Theme;
   private keybindings: KeybindingsManager;
@@ -135,7 +153,7 @@ class SubagentDashboard implements Component {
   private done: (value: string | null) => void;
 
   private closed = false;
-  private ticker: ReturnType<typeof setInterval>;
+  private ticker?: ReturnType<typeof setInterval>;
   private unsubChange: () => void;
 
   constructor(
@@ -152,19 +170,29 @@ class SubagentDashboard implements Component {
     this.view = view;
     this.selection = selection;
     this.done = done;
-    // Elapsed times, token counts, and statuses tick along at 1Hz.
-    this.ticker = setInterval(() => this.tui.requestRender(), 1000);
-    this.unsubChange = view.subscribe(() => this.tui.requestRender());
+    this.refreshTicker();
+    this.unsubChange = view.subscribe(() => {
+      this.refreshTicker();
+      this.tui.requestRender();
+    });
   }
 
   private subs(): ReadonlyArray<SubagentSnapshot> {
     return this.view.list();
   }
 
+  private refreshTicker() {
+    const interval = this.subs().some((snap) => snap.status === "running")
+      ? SPINNER_INTERVAL_MS
+      : 1000;
+    if (this.ticker) clearInterval(this.ticker);
+    this.ticker = setInterval(() => this.tui.requestRender(), interval);
+  }
+
   private cleanup() {
     if (this.closed) return false;
     this.closed = true;
-    clearInterval(this.ticker);
+    if (this.ticker) clearInterval(this.ticker);
     this.unsubChange();
     return true;
   }
@@ -238,44 +266,33 @@ class SubagentDashboard implements Component {
     reconcileDashboardSelection(this.selection, subs);
 
     const rows = this.tui.terminal.rows || 30;
-    // Render exactly terminal rows - 1 so the overlay covers the header,
-    // chat, editor, and extra footer lines while leaving pi's final footer
-    // row visible.
-    const bodyHeight = Math.max(6, rows - 5);
-    const innerWidth = width - 2;
+    const maxBodyHeight = Math.max(1, rows - 5);
+    const bodyHeight =
+      subs.length > maxBodyHeight ? maxBodyHeight : Math.max(1, subs.length);
+    const innerWidth = Math.max(0, width - 2);
 
     const lines: string[] = [];
-
-    // Header: title left, count right
-    const headerLeft = theme.fg("accent", theme.bold("Subagents"));
-    const headerRight = theme.fg(
-      "muted",
-      `${subs.length} agent${subs.length === 1 ? "" : "s"}`,
-    );
-    const headerPad = Math.max(
-      1,
-      width - visibleWidth(headerLeft) - visibleWidth(headerRight) - 4,
-    );
-    lines.push(
-      truncateToWidth(
-        `  ${headerLeft}${" ".repeat(headerPad)}${headerRight}  `,
-        width,
-      ),
-    );
-
-    // Top border with panel title
-    const settled = subs.filter((s) => s.status !== "running").length;
+    const running = subs.filter((snap) => snap.status === "running").length;
+    const done = subs.filter((snap) => snap.status === "done").length;
+    const failed = subs.filter((snap) => snap.status === "error").length;
+    const summary =
+      [
+        running > 0 ? `${running} running` : "",
+        done > 0 ? `${done} done` : "",
+        failed > 0 ? `${failed} failed` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ") || "no agents";
     lines.push(
       theme.fg("border", "╭") +
-        this.borderSegment(innerWidth, `agents · ${settled}/${subs.length}`) +
+        this.borderSegment(innerWidth, `Subagents · ${summary}`) +
         theme.fg("border", "╮"),
     );
 
-    // Rows
     const divider = theme.fg("border", "│");
     const rowLines = this.renderRows(subs, innerWidth, bodyHeight);
-    for (let i = 0; i < bodyHeight; i++) {
-      lines.push(divider + this.pad(rowLines[i] ?? "", innerWidth) + divider);
+    for (const row of rowLines) {
+      lines.push(divider + this.pad(row, innerWidth) + divider);
     }
 
     // Bottom border
@@ -307,33 +324,35 @@ class SubagentDashboard implements Component {
     const theme = this.theme;
     const out: string[] = [];
 
-    // Scroll window around selection
+    const needsMore = subs.length > height && height > 1;
+    const visibleHeight = needsMore ? height - 1 : height;
+
+    // Scroll window around selection. The more indicator gets its own row, so
+    // it never replaces a selectable subagent.
     let start = 0;
-    if (subs.length > height) {
+    if (subs.length > visibleHeight) {
       start = Math.min(
-        Math.max(0, this.selection.index - Math.floor(height / 2)),
-        subs.length - height,
+        Math.max(0, this.selection.index - Math.floor(visibleHeight / 2)),
+        Math.max(0, subs.length - visibleHeight),
       );
     }
-    const visible = subs.slice(start, start + height);
+    const visible = subs.slice(start, start + visibleHeight);
 
     for (let i = 0; i < visible.length; i++) {
       const snap = visible[i];
       const index = start + i;
       const isSelected = index === this.selection.index;
 
-      // Left: marker, status square, title
       const marker = isSelected ? theme.fg("accent", "❯") : " ";
       const safeTitle = sanitizeSubagentDisplayLine(snap.title) || snap.id;
       const title = isSelected
         ? theme.fg("accent", safeTitle)
         : theme.fg("text", safeTitle);
-      const left = ` ${marker} ${statusGlyph(snap, theme)} ${title}`;
+      const activity = runningActivity(snap);
+      const prefix = ` ${marker} ${statusGlyph(snap, theme)} `;
 
-      // Right: backend · model · context utilization · elapsed · status
       const utilization = formatContextUtilization(snap.usage);
-      const dot = theme.fg("dim", " · ");
-      const rightParts = [
+      const metadata = [
         theme.fg("muted", snap.backend),
         theme.fg(
           "muted",
@@ -341,24 +360,45 @@ class SubagentDashboard implements Component {
         ),
         ...(utilization ? [theme.fg("muted", utilization)] : []),
         theme.fg("muted", formatElapsed(snap)),
-        statusWord(snap, theme),
       ];
-      const right = `${rightParts.join(dot)} `;
-
+      const dot = theme.fg("dim", " · ");
+      // Preserve elapsed and the activity-bearing left side longest. Shed the
+      // least useful metadata as a segment instead of clipping a joined tail.
+      while (
+        metadata.length > 1 &&
+        visibleWidth(metadata.join(dot)) > Math.max(0, width - 16)
+      ) {
+        metadata.shift();
+      }
+      const right = metadata.join(dot);
       const rightWidth = visibleWidth(right);
-      const leftMax = Math.max(0, width - rightWidth - 2);
-      const leftTruncated = truncateToWidth(left, leftMax);
-      const gap = Math.max(2, width - visibleWidth(leftTruncated) - rightWidth);
-      out.push(truncateToWidth(leftTruncated + " ".repeat(gap) + right, width));
+      const leftMax = Math.max(0, width - rightWidth - (right ? 2 : 0));
+      const activityLabel = activity ? theme.fg("muted", ` · ${activity}`) : "";
+      const left =
+        prefix +
+        truncateToWidth(
+          title,
+          Math.max(
+            0,
+            leftMax - visibleWidth(prefix) - visibleWidth(activityLabel),
+          ),
+        ) +
+        truncateToWidth(
+          activityLabel,
+          Math.max(0, leftMax - visibleWidth(prefix)),
+        );
+      const gap = right
+        ? Math.max(1, width - visibleWidth(left) - rightWidth)
+        : 0;
+      out.push(truncateToWidth(left + " ".repeat(gap) + right, width));
     }
 
-    if (start > 0) {
-      out[0] = truncateToWidth(theme.fg("dim", `   ... ${start} more`), width);
-    }
-    if (start + height < subs.length) {
-      out[out.length - 1] = truncateToWidth(
-        theme.fg("dim", `   ... ${subs.length - start - height} more`),
-        width,
+    if (needsMore) {
+      out.push(
+        truncateToWidth(
+          theme.fg("dim", `   … ${subs.length - visible.length} more`),
+          width,
+        ),
       );
     }
     return out;
@@ -367,7 +407,6 @@ class SubagentDashboard implements Component {
   invalidate(): void {}
 }
 
-// --- Takeover view ------------------------------------------------------------
 
 const TRANSCRIPT_SCROLL_STEP = 6;
 
