@@ -252,7 +252,8 @@ export default function openPiSetup(pi: ExtensionAPI) {
       ),
       subagent_result_display: Type.Optional(
         StringEnum(DETAIL_DISPLAYS, {
-          description: "Subagent result display: full or compact preview.",
+          description:
+            "Subagent result display: full, or compact status summary (raw child report behind app.tools.expand).",
         }),
       ),
       bash_tool_display: Type.Optional(
