@@ -107,6 +107,7 @@ export const PLAN_READY_ACTIONS = {
   continue: "Continue planning",
   current: "Implement in this session",
   fresh: "Start a fresh session",
+  off: "Turn plan mode off",
 } as const;
 
 export function buildPlanImplementationPrompt(plan: string) {

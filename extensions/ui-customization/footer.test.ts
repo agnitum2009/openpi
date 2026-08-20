@@ -201,6 +201,39 @@ test("context uses warning and error tones at thresholds", () => {
   assert.equal(ok.tone, "muted");
 });
 
+test("a single status inlines into the first footer line when it fits", () => {
+  const lines = renderFooter({
+    cwd: "/tmp/project",
+    modelInfo,
+    gitInfo,
+    style: "plain",
+    lines: DEFAULT_FOOTER_LINES,
+    width: 140,
+    theme,
+    statuses: ["plan mode"],
+  });
+
+  assert.equal(lines.length, 1);
+  assert.match(lines[0]!, /seal\/gpt-5\.6-sol/);
+  assert.match(lines[0]!, /plan mode/);
+});
+
+test("a single status stays on its own line when it cannot fit", () => {
+  const lines = renderFooter({
+    cwd: "/tmp/project",
+    modelInfo,
+    gitInfo,
+    style: "plain",
+    lines: [["model"]],
+    width: 25,
+    theme,
+    statuses: ["plan mode"],
+  });
+
+  assert.equal(lines.length, 2);
+  assert.match(lines[1]!, /plan mode/);
+});
+
 test("operational statuses always append after layout lines", () => {
   const lines = renderFooter({
     cwd: "/tmp/project",
@@ -230,9 +263,10 @@ test("statuses remain visible even when metric layout is empty after normalize",
     statuses: ["bg: sleep"],
   });
 
-  // normalize falls back to the default metric line; statuses still append.
-  assert.ok(lines.length >= 2);
-  assert.match(lines.at(-1)!, /bg: sleep/);
+  // normalize falls back to the default metric line; the status stays visible
+  // whether it inlines into that line or lands on its own.
+  assert.ok(lines.length >= 1);
+  assert.match(lines.join("\n"), /bg: sleep/);
 });
 
 test("legacy buildFooterContent still groups selected items", () => {
