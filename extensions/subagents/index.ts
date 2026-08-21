@@ -570,9 +570,12 @@ export default function (pi: ExtensionAPI) {
     managerPromise?.then(updateStatus).catch(() => undefined);
   });
 
-  // These settled while the model was working on something else, so they go
-  // into context without forcing a turn per stale subagent.
-  pi.on("agent_settled", () => flushResults(false));
+  // These settled while the model was working on something else. Upstream #48
+  // (merged 0.4.0): nextTurn is only consumed on another user prompt, so
+  // fire-and-forget results would never fulfill their documented auto
+  // re-invocation contract. Flush the batch as ONE follow-up at the
+  // authoritative parent boundary (same drain-once semantics as idle wake).
+  pi.on("agent_settled", () => flushResults(true));
 
   pi.on("session_shutdown", async () => {
     resultDelivery.clear();

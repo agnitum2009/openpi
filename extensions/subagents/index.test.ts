@@ -11,7 +11,7 @@ import type {
 import { PLAN_MODE_CHANNEL } from "../shared/plan-mode-state.ts";
 import subagents, { createSubagentResultDispatcher } from "./index.ts";
 
-test("deferred subagent results render before a hidden next-turn injection", () => {
+test("subagent results render before the hidden wake-up message", () => {
   const events: unknown[] = [];
   const pi = {
     appendEntry(customType: string, data: unknown) {
@@ -23,29 +23,26 @@ test("deferred subagent results render before a hidden next-turn injection", () 
   } as unknown as ExtensionAPI;
   const dispatch = createSubagentResultDispatcher(pi, () => "report");
 
-  dispatch(
-    [
-      {
-        id: "sa-3",
-        origin: "model",
-        backend: "pi",
-        title: "investigate plan mode",
-        prompt: "inspect",
-        cwd: process.cwd(),
-        status: "done",
-        createdAt: 0,
-        settledAt: 1_000,
-        meta: { backend: "pi" },
-        usage: {},
-        transcript: [],
-        liveTools: [],
-        queued: [],
-        finalText: "report",
-        turns: 1,
-      },
-    ],
-    false,
-  );
+  dispatch([
+    {
+      id: "sa-3",
+      origin: "model",
+      backend: "pi",
+      title: "investigate plan mode",
+      prompt: "inspect",
+      cwd: process.cwd(),
+      status: "done",
+      createdAt: 0,
+      settledAt: 1_000,
+      meta: { backend: "pi" },
+      usage: {},
+      transcript: [],
+      liveTools: [],
+      queued: [],
+      finalText: "report",
+      turns: 1,
+    },
+  ]);
 
   assert.deepEqual(events, [
     {
@@ -74,7 +71,7 @@ test("deferred subagent results render before a hidden next-turn injection", () 
           status: "done",
         },
       },
-      options: { deliverAs: "nextTurn" },
+      options: { deliverAs: "followUp", triggerTurn: true },
     },
   ]);
 });
