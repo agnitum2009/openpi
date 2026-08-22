@@ -1,107 +1,380 @@
+import { isAbsolute, relative } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { keyHint, type Theme } from "@earendil-works/pi-coding-agent";
-import {
-  truncateToWidth,
-  visibleWidth,
-  type Component,
-} from "@earendil-works/pi-tui";
+import type {
+  AgentToolResult,
+  Theme,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import type { TSchema } from "typebox";
 
-// Native Write/Edit renderings include their title and context rows. Three
-// visible rows keep the operation identifiable while making repeated file
-// mutations substantially quieter than Claude Code's default preview.
-export const FILE_MUTATION_PREVIEW_LINES = 3;
-export const BASH_OUTPUT_PREVIEW_LINES = 1;
+type ActivityStatus = "pending" | "success" | "error";
 
-function expandHint(hidden: number) {
-  return `… ${hidden} more line${hidden === 1 ? "" : "s"} · ${keyHint("app.tools.expand", "to expand")}`;
+type ActivityRenderState<TDetails> = {
+  openpiActivity?: {
+    result?: AgentToolResult<TDetails>;
+    status: ActivityStatus;
+    startedAt?: number;
+    endedAt?: number;
+    interval?: NodeJS.Timeout;
+    nativeCallComponent?: Component;
+    nativeResultComponent?: Component;
+  };
+};
+
+type ActivityRow = {
+  verb: string;
+  target: string;
+  detail?: string;
+};
+
+const HORIZONTAL_PADDING = "  ";
+
+const emptyComponent: Component = {
+  render: () => [],
+  invalidate() {},
+};
+
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
-/** Keep a long command identifiable without allowing it to wrap for many rows. */
-export function singleLineRenderedComponent(
-  component: Component,
+function string(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function number(value: unknown) {
+  return typeof value === "number" ? value : undefined;
+}
+
+function textOutput(result: AgentToolResult<unknown> | undefined) {
+  return (
+    result?.content
+      .filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("\n") ?? ""
+  );
+}
+
+function resultCount(result: AgentToolResult<unknown> | undefined) {
+  return textOutput(result)
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0 && !line.trim().startsWith("["))
+    .length;
+}
+
+function grepMatchCount(result: AgentToolResult<unknown> | undefined) {
+  const output = textOutput(result).trim();
+  if (!output || output === "No matches found") return 0;
+  return output.split(/\r?\n/).filter((line) => /^.+:\d+:/.test(line)).length;
+}
+
+function itemCount(
+  result: AgentToolResult<unknown> | undefined,
+  emptyMessage: string,
+) {
+  const output = textOutput(result).trim();
+  return !output || output === emptyMessage ? 0 : resultCount(result);
+}
+
+function plural(count: number, singular: string) {
+  const pluralForm =
+    singular === "match"
+      ? "matches"
+      : singular === "entry"
+        ? "entries"
+        : `${singular}s`;
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+function editStats(details: unknown) {
+  const diff = string(record(details).diff);
+  let additions = 0;
+  let removals = 0;
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith("+") && !line.startsWith("+++")) additions += 1;
+    if (line.startsWith("-") && !line.startsWith("---")) removals += 1;
+  }
+  return `+${additions} −${removals}`;
+}
+
+function range(args: Record<string, unknown>) {
+  const offset = number(args.offset);
+  const limit = number(args.limit);
+  if (offset === undefined && limit === undefined) return "";
+  const start = offset ?? 1;
+  return limit === undefined ? `:${start}-` : `:${start}-${start + limit - 1}`;
+}
+
+function displayPath(path: string, cwd: string) {
+  if (!isAbsolute(path)) return path;
+  const local = relative(cwd, path);
+  if (local === "") return ".";
+  return local.startsWith("..") || isAbsolute(local) ? path : local;
+}
+
+function activityRow(
+  name: string,
+  argsValue: unknown,
+  result: AgentToolResult<unknown> | undefined,
+  cwd: string,
+): ActivityRow {
+  const args = record(argsValue);
+  const path = displayPath(string(args.path) || ".", cwd);
+  switch (name) {
+    case "read":
+      return { verb: "Read", target: `${path}${range(args)}` };
+    case "bash":
+      return {
+        verb: "Ran",
+        target: string(args.command).replace(/\s+/g, " ").trim(),
+      };
+    case "write": {
+      const content = string(args.content);
+      const lines =
+        content.length === 0
+          ? 0
+          : content.replace(/\r?\n$/, "").split(/\r?\n/).length;
+      return { verb: "Wrote", target: path, detail: plural(lines, "line") };
+    }
+    case "edit":
+      return {
+        verb: "Edited",
+        target: path,
+        detail: editStats(result?.details),
+      };
+    case "grep":
+      return {
+        verb: "Searched",
+        target: string(args.pattern),
+        detail: `in ${path}  ${plural(grepMatchCount(result), "match")}`,
+      };
+    case "find":
+      return {
+        verb: "Searched",
+        target: string(args.pattern),
+        detail: `in ${path}  ${plural(itemCount(result, "No files found matching pattern"), "result")}`,
+      };
+    case "ls":
+      return {
+        verb: "Listed",
+        target: path,
+        detail: plural(itemCount(result, "(empty directory)"), "entry"),
+      };
+    default:
+      return { verb: name, target: "" };
+  }
+}
+
+function pendingVerb(name: string) {
+  switch (name) {
+    case "read":
+      return "Reading";
+    case "bash":
+      return "Running";
+    case "write":
+      return "Writing";
+    case "edit":
+      return "Editing";
+    case "grep":
+    case "find":
+      return "Searching";
+    case "ls":
+      return "Listing";
+    default:
+      return "Running";
+  }
+}
+
+function activityIcon(name: string) {
+  switch (name) {
+    case "read":
+      return "\ueaa4"; // Nerd Fonts Codicon: book
+    case "bash":
+      return "\uea85"; // Nerd Fonts Codicon: terminal
+    case "write":
+    case "edit":
+      return "\uea73"; // Nerd Fonts Codicon: edit
+    case "grep":
+    case "find":
+      return "\uea6d"; // Nerd Fonts Codicon: search
+    case "ls":
+      return "\uea83"; // Nerd Fonts Codicon: folder
+    default:
+      return "✓";
+  }
+}
+
+function errorSummary(result: AgentToolResult<unknown> | undefined) {
+  const lines = textOutput(result)
+    .split(/\r?\n/)
+    .map((line) => stripVTControlCharacters(line).trim())
+    .filter(Boolean);
+  return (
+    [...lines]
+      .reverse()
+      .find((line) =>
+        /(?:command (?:exited|timed out|aborted)|error|denied|failed)/i.test(
+          line,
+        ),
+      ) ?? lines[0]
+  );
+}
+
+function duration(
+  state: NonNullable<ActivityRenderState<unknown>["openpiActivity"]>,
+) {
+  if (state.startedAt === undefined) return undefined;
+  const seconds = Math.floor(
+    ((state.endedAt ?? Date.now()) - state.startedAt) / 1000,
+  );
+  return seconds > 0 ? `${seconds}s` : undefined;
+}
+
+function activityText(
+  name: string,
+  args: unknown,
+  state: NonNullable<ActivityRenderState<unknown>["openpiActivity"]>,
   theme: Theme,
+  cwd: string,
+) {
+  const row = activityRow(name, args, state.result, cwd);
+  const elapsed = duration(state);
+  if (state.status === "pending") {
+    const detail = elapsed ? ` · ${elapsed}` : "";
+    return `${theme.fg("warning", "◌")} ${theme.fg("toolTitle", pendingVerb(name))}  ${row.target}${theme.fg("dim", detail)}`;
+  }
+  if (state.status === "error") {
+    const summary = errorSummary(state.result);
+    const detail = [elapsed, summary].filter(Boolean).join(" · ");
+    return `${theme.fg("error", "✕")} ${theme.fg("error", "Failed")}   ${row.target}${detail ? theme.fg("dim", ` · ${detail}`) : ""}`;
+  }
+  const detail = [row.detail, elapsed].filter(Boolean).join(" · ");
+  return `${theme.fg("dim", activityIcon(name))} ${theme.fg("toolTitle", row.verb.padEnd(8))} ${row.target}${detail ? theme.fg("dim", `  ${detail}`) : ""}`;
+}
+
+function activityComponent(
+  name: string,
+  args: unknown,
+  state: NonNullable<ActivityRenderState<unknown>["openpiActivity"]>,
+  theme: Theme,
+  cwd: string,
 ): Component {
   return {
     render(width) {
-      const lines = component.render(width);
-      if (lines.length <= 1) return lines;
-      if (width <= 2) return [truncateToWidth(lines[0] ?? "", width, "")];
+      const contentWidth = width - HORIZONTAL_PADDING.length * 2;
+      if (contentWidth <= 0) return [];
       return [
-        truncateToWidth(lines[0] ?? "", width - 2, "") + theme.fg("dim", " …"),
+        `${HORIZONTAL_PADDING}${truncateToWidth(
+          activityText(name, args, state, theme, cwd),
+          contentWidth,
+          "…",
+        )}${HORIZONTAL_PADDING}`,
       ];
     },
-    invalidate() {
-      component.invalidate();
-    },
+    invalidate() {},
   };
 }
 
-/** Preserve one output row, warnings, and final timing in compact Bash mode. */
-export function compactBashRenderedComponent(
-  component: Component,
-  theme: Theme,
-  maximum = BASH_OUTPUT_PREVIEW_LINES,
-): Component {
+/**
+ * Preserve Pi's complete tool definition and execution semantics while
+ * replacing only the collapsed operator-facing projection.
+ */
+export function withActivityRenderer<TParams extends TSchema, TDetails, TState>(
+  definition: ToolDefinition<TParams, TDetails, TState>,
+): ToolDefinition<TParams, TDetails, TState & ActivityRenderState<TDetails>> {
+  const nativeRenderCall = definition.renderCall;
+  const nativeRenderResult = definition.renderResult;
   return {
-    render(width) {
-      const rendered = component.render(width);
-      const visible = rendered.filter(
-        (line) => stripVTControlCharacters(line).trim().length > 0,
+    ...definition,
+    renderShell: "self",
+    renderCall(args, theme, context) {
+      const state = context.state as TState & ActivityRenderState<TDetails>;
+      state.openpiActivity ??= { status: "pending" };
+      const activity = state.openpiActivity;
+      if (context.executionStarted && activity.startedAt === undefined) {
+        activity.startedAt = Date.now();
+      }
+      if (
+        context.executionStarted &&
+        definition.name === "bash" &&
+        activity.status === "pending" &&
+        !context.expanded &&
+        activity.interval === undefined
+      ) {
+        activity.interval = setInterval(() => context.invalidate(), 1000);
+        activity.interval.unref();
+      }
+      if (context.expanded && activity.interval) {
+        clearInterval(activity.interval);
+        activity.interval = undefined;
+      }
+      if (context.expanded && nativeRenderCall) {
+        const nativeContext: Parameters<typeof nativeRenderCall>[2] = {
+          ...context,
+          state,
+          lastComponent: activity.nativeCallComponent,
+        };
+        const component = nativeRenderCall(args, theme, nativeContext);
+        activity.nativeCallComponent = component;
+        return component;
+      }
+      return activityComponent(
+        definition.name,
+        args,
+        activity as NonNullable<ActivityRenderState<unknown>["openpiActivity"]>,
+        theme,
+        context.cwd,
       );
-      let nativeHidden = 0;
-      const content: string[] = [];
-      const metadata: string[] = [];
-      let status: string | undefined;
-      for (const line of visible) {
-        const plain = stripVTControlCharacters(line).trim();
-        const hiddenMatch = plain.match(/\(?([0-9]+) earlier lines,/);
-        if (hiddenMatch) {
-          nativeHidden += Number(hiddenMatch[1]);
-        } else if (/^(Took|Elapsed)\s/.test(plain)) {
-          status = line;
-        } else if (/^\[(Full output|Truncated):/.test(plain)) {
-          metadata.push(line);
-        } else {
-          content.push(line);
+    },
+    renderResult(result, options, theme, context) {
+      const state = context.state as TState & ActivityRenderState<TDetails>;
+      state.openpiActivity ??= { status: "pending" };
+      const activity = state.openpiActivity;
+      activity.result = result;
+      activity.status = options.isPartial
+        ? "pending"
+        : context.isError
+          ? "error"
+          : "success";
+      if (
+        options.isPartial &&
+        definition.name === "bash" &&
+        !options.expanded &&
+        activity.interval === undefined
+      ) {
+        activity.interval = setInterval(() => context.invalidate(), 1000);
+        activity.interval.unref();
+      }
+      if (!options.isPartial || context.isError || options.expanded) {
+        activity.endedAt ??= Date.now();
+        if (activity.interval) {
+          clearInterval(activity.interval);
+          activity.interval = undefined;
         }
       }
-      const preview = content.slice(0, maximum);
-      const hidden =
-        nativeHidden + Math.max(0, content.length - preview.length);
-      return [
-        ...preview,
-        ...(hidden > 0 ? [theme.fg("dim", expandHint(hidden))] : []),
-        ...metadata,
-        ...(status ? [status] : []),
-      ];
-    },
-    invalidate() {
-      component.invalidate();
-    },
-  };
-}
+      if (options.isPartial && options.expanded) {
+        activity.endedAt = undefined;
+      }
 
-export function compactRenderedComponent(
-  component: Component,
-  theme: Theme,
-  maximum = FILE_MUTATION_PREVIEW_LINES,
-  background?: (text: string) => string,
-): Component {
-  return {
-    render(width) {
-      const lines = component.render(width);
-      if (lines.length <= maximum) return lines;
-      const hidden = lines.length - maximum;
-      const hint = theme.fg("dim", expandHint(hidden));
-      const paddedHint =
-        hint + " ".repeat(Math.max(0, width - visibleWidth(hint)));
-      return [
-        ...lines.slice(0, maximum),
-        background ? background(paddedHint) : hint,
-      ];
-    },
-    invalidate() {
-      component.invalidate();
+      if (options.expanded && nativeRenderResult) {
+        const nativeContext: Parameters<typeof nativeRenderResult>[3] = {
+          ...context,
+          state,
+          lastComponent: activity.nativeResultComponent,
+        };
+        const component = nativeRenderResult(
+          result,
+          options,
+          theme,
+          nativeContext,
+        );
+        activity.nativeResultComponent = component;
+        return component;
+      }
+      return emptyComponent;
     },
   };
 }

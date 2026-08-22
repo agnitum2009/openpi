@@ -29,8 +29,7 @@ test("setup defaults to disabled next-action suggestions", () => {
   assert.deepEqual(parseSetupConfig(undefined), DEFAULT_SETUP_CONFIG);
   assert.equal(
     formatSetupConfig(parseSetupConfig(undefined)),
-    `Capability discovery: explicit\nNext-action suggestions: disabled\nWorkflows: 8 concurrent agents · 128 total calls\nUI: large header off · custom footer on · plain · ${formatFooterLines(DEFAULT_FOOTER_LINES)}\nSubagent results: full by default\nBash operations: folded preview (Ctrl+O expands all)\nWrite/Edit operations: folded preview (Ctrl+O expands all)\nExtension load group: all · 26 extensions · /reload applies\nPost-edit command: off\nAgent role models (Subagents + Workflows): explorer inherit · implementer inherit · reviewer inherit · advisor inherit`,
-  );
+    `Capability discovery: explicit\nNext-action suggestions: disabled\nWorkflows: 8 concurrent agents · 128 total calls\nUI: large header off · custom footer on · plain · ${formatFooterLines(DEFAULT_FOOTER_LINES)}\nSubagent results: full by default\nBash operations: one-line activity summary (Ctrl+O restores native evidence)\nWrite/Edit operations: one-line activity summary (Ctrl+O restores native evidence)\nExtension load group: all · 26 extensions · /reload applies\nPost-edit command: off\nAgent role models (Subagents + Workflows): explorer inherit · implementer inherit · reviewer inherit · advisor inherit`,  );
 });
 
 test("setup status appends optional integration inventory only when supplied", () => {
@@ -71,8 +70,7 @@ test("setup config accepts suggestion models and migrates the recap key", () => 
   });
   assert.equal(
     formatSetupConfig(configured),
-    `Capability discovery: explicit\nNext-action suggestions: seal/deepseek-v4-flash · off · Right accepts\nWorkflows: 8 concurrent agents · 128 total calls\nUI: large header off · custom footer on · plain · ${formatFooterLines(DEFAULT_FOOTER_LINES)}\nSubagent results: full by default\nBash operations: folded preview (Ctrl+O expands all)\nWrite/Edit operations: folded preview (Ctrl+O expands all)\nExtension load group: all · 26 extensions · /reload applies\nPost-edit command: off\nAgent role models (Subagents + Workflows): explorer inherit · implementer inherit · reviewer inherit · advisor inherit`,
-  );
+    `Capability discovery: explicit\nNext-action suggestions: seal/deepseek-v4-flash · off · Right accepts\nWorkflows: 8 concurrent agents · 128 total calls\nUI: large header off · custom footer on · plain · ${formatFooterLines(DEFAULT_FOOTER_LINES)}\nSubagent results: full by default\nBash operations: one-line activity summary (Ctrl+O restores native evidence)\nWrite/Edit operations: one-line activity summary (Ctrl+O restores native evidence)\nExtension load group: all · 26 extensions · /reload applies\nPost-edit command: off\nAgent role models (Subagents + Workflows): explorer inherit · implementer inherit · reviewer inherit · advisor inherit`,  );
 
   assert.deepEqual(
     parseSetupConfig({

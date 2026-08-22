@@ -1,88 +1,28 @@
 import {
   createBashToolDefinition,
   createEditToolDefinition,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createReadToolDefinition,
   createWriteToolDefinition,
   type ExtensionAPI,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { TSchema } from "typebox";
 import { loadSetupConfig } from "../shared/setup-config.ts";
-import {
-  compactBashRenderedComponent,
-  compactRenderedComponent,
-  singleLineRenderedComponent,
-} from "./render.ts";
+import { withActivityRenderer } from "./render.ts";
 
-function withCompactCallRenderer(
-  definition: ToolDefinition<any, any, any>,
-): ToolDefinition<any, any, any> {
-  const renderCall = definition.renderCall;
-  if (!renderCall) return definition;
-  return {
-    ...definition,
-    renderCall(args, theme, context) {
-      const component = renderCall(args, theme, context);
-      if (
-        context.expanded ||
-        loadSetupConfig().ui.fileMutationDisplay === "full"
-      ) {
-        return component;
-      }
-      // While the model is still streaming a large Write/Edit payload, a
-      // syntax-highlighted preview changes on nearly every token and makes the
-      // entire tool block flash. Keep that phase to a stable one-line header;
-      // reveal the bounded preview once arguments are complete.
-      if (!context.argsComplete) {
-        return singleLineRenderedComponent(component, theme);
-      }
-      const background = context.isPartial
-        ? (text: string) => theme.bg("toolPendingBg", text)
-        : context.isError
-          ? (text: string) => theme.bg("toolErrorBg", text)
-          : (text: string) => theme.bg("toolSuccessBg", text);
-      return compactRenderedComponent(component, theme, undefined, background);
-    },
-  };
-}
-
-function withCompactBashRenderer(
-  definition: ToolDefinition<any, any, any>,
-): ToolDefinition<any, any, any> {
-  const renderCall = definition.renderCall;
-  const renderResult = definition.renderResult;
-  if (!renderCall || !renderResult) return definition;
-  return {
-    ...definition,
-    renderCall(args, theme, context) {
-      // A compact wrapper is not the native Text component expected through
-      // lastComponent, so rebuild the cheap call renderer on each update.
-      const component = renderCall(args, theme, {
-        ...context,
-        lastComponent: undefined,
-      });
-      if (context.expanded || loadSetupConfig().ui.bashToolDisplay === "full") {
-        return component;
-      }
-      return singleLineRenderedComponent(component, theme);
-    },
-    renderResult(result, options, theme, context) {
-      // Bash streams partial results. Never hand our wrapper back to Pi's
-      // native BashResultRenderComponent updater.
-      const component = renderResult(result, options, theme, {
-        ...context,
-        lastComponent: undefined,
-      });
-      if (options.expanded || loadSetupConfig().ui.bashToolDisplay === "full") {
-        return component;
-      }
-      return compactBashRenderedComponent(component, theme);
-    },
-  };
+function compact<TParams extends TSchema, TDetails, TState>(
+  definition: ToolDefinition<TParams, TDetails, TState>,
+  enabled: boolean,
+) {
+  return enabled ? withActivityRenderer(definition) : definition;
 }
 
 /**
- * Override only the TUI renderers. The wrapped definitions are Pi's native
- * Bash/Write/Edit tools, so schemas, execution, mutation queues, diffs, and
- * errors stay on the upstream implementation.
+ * Override only Pi's TUI projection. Every wrapped definition retains its
+ * native schema, prompt metadata, execute function, result, and details.
  */
 export default function fileMutationDisplay(pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => {
@@ -96,10 +36,28 @@ export default function fileMutationDisplay(pi: ExtensionAPI) {
           display.fileMutationDisplay === "full",
       );
     }
-    pi.registerTool(withCompactBashRenderer(createBashToolDefinition(ctx.cwd)));
+
     pi.registerTool(
-      withCompactCallRenderer(createWriteToolDefinition(ctx.cwd)),
+      compact(
+        createBashToolDefinition(ctx.cwd),
+        display.bashToolDisplay !== "full",
+      ),
     );
-    pi.registerTool(withCompactCallRenderer(createEditToolDefinition(ctx.cwd)));
+    pi.registerTool(
+      compact(
+        createWriteToolDefinition(ctx.cwd),
+        display.fileMutationDisplay !== "full",
+      ),
+    );
+    pi.registerTool(
+      compact(
+        createEditToolDefinition(ctx.cwd),
+        display.fileMutationDisplay !== "full",
+      ),
+    );
+    pi.registerTool(withActivityRenderer(createReadToolDefinition(ctx.cwd)));
+    pi.registerTool(withActivityRenderer(createGrepToolDefinition(ctx.cwd)));
+    pi.registerTool(withActivityRenderer(createFindToolDefinition(ctx.cwd)));
+    pi.registerTool(withActivityRenderer(createLsToolDefinition(ctx.cwd)));
   });
 }

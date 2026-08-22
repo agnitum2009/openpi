@@ -555,7 +555,7 @@ async function discoverRegisteredToolNames() {
   const nameRe = /name\s*:\s*["'`]([a-z0-9_]+)["'`]/i;
   const namedToolRe = /defineTool\s*\(\s*\{/g;
   // Factory style: `registerTool(createEditToolDefinition(...))` /
-  // `registerTool(withCompactCallRenderer(createWriteToolDefinition(...)))`.
+  // `registerTool(withActivityRenderer(createWriteToolDefinition(...)))`.
   // The tool name is not a literal here, so an inline-name scan is blind to it.
   // A factory registration is `registerTool(` whose first argument is a call
   // expression, not an object/generic literal. Reach through any renderer
@@ -605,10 +605,10 @@ async function discoverRegisteredToolNames() {
 
 /**
  * Factory-registered tools the scan cannot name-resolve, mapped to the tool
- * name they actually register, with the classification they carry. write/edit
- * are native Pi builtins (children keep them), wrapped only for compact
- * renderers — not package-owned parent-only tools. Any NEW factory registration
- * must be added here (with its classification) or the drift guard fails closed.
+ * name they actually register, with the classification they carry. These seven
+ * native Pi builtins remain child-safe; OpenPI wraps only their TUI renderers.
+ * Any NEW factory registration must be added here (with its classification) or
+ * the drift guard fails closed.
  */
 const KNOWN_FACTORY_TOOLS: Record<
   string,
@@ -624,6 +624,22 @@ const KNOWN_FACTORY_TOOLS: Record<
   },
   "createEditToolDefinition(...)": {
     tool: "edit",
+    classification: "child-safe-builtin",
+  },
+  "createReadToolDefinition(...)": {
+    tool: "read",
+    classification: "child-safe-builtin",
+  },
+  "createGrepToolDefinition(...)": {
+    tool: "grep",
+    classification: "child-safe-builtin",
+  },
+  "createFindToolDefinition(...)": {
+    tool: "find",
+    classification: "child-safe-builtin",
+  },
+  "createLsToolDefinition(...)": {
+    tool: "ls",
     classification: "child-safe-builtin",
   },
   "createHumanHandoffToolDefinition(...)": {
@@ -688,6 +704,14 @@ test("every registered package tool is classified child-safe or excluded (fail-c
     factoryRegistrations.some((r) => r.includes("createEditToolDefinition")),
     "scan should see the factory-registered edit builtin",
   );
+  for (const name of ["Read", "Grep", "Find", "Ls"]) {
+    assert.ok(
+      factoryRegistrations.some((registration) =>
+        registration.includes(`create${name}ToolDefinition`),
+      ),
+      `scan should see the factory-registered ${name.toLowerCase()} builtin`,
+    );
+  }
 
   const safe = new Set<string>(CHILD_SAFE_PACKAGE_TOOL_NAMES);
   const excluded = new Set<string>(CHILD_EXCLUDED_TOOL_NAMES);

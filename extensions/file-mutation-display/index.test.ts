@@ -1,18 +1,29 @@
 import assert from "node:assert/strict";
+import { stripVTControlCharacters } from "node:util";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   createAgentSession,
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
   DefaultResourceLoader,
   initTheme,
   SessionManager,
   SettingsManager,
+  ToolExecutionComponent,
   type ExtensionContext,
   type Theme,
 } from "@earendil-works/pi-coding-agent";
+import type { TUI } from "@earendil-works/pi-tui";
 import fileMutationDisplay from "./index.ts";
+import { withActivityRenderer } from "./render.ts";
 
 initTheme("dark", false);
 
@@ -51,20 +62,43 @@ async function withSession(
   }
 }
 
-test("overrides rendering while retaining native Bash/Write/Edit execution", async () => {
+test("overrides all seven activity renderers without changing model-facing definitions", async () => {
   await withSession(async (session, cwd) => {
+    const native = Object.fromEntries(
+      [
+        createBashToolDefinition(cwd),
+        createReadToolDefinition(cwd),
+        createWriteToolDefinition(cwd),
+        createEditToolDefinition(cwd),
+        createGrepToolDefinition(cwd),
+        createFindToolDefinition(cwd),
+        createLsToolDefinition(cwd),
+      ].map((definition) => [definition.name, definition]),
+    );
+    const names = ["bash", "read", "write", "edit", "grep", "find", "ls"];
+    for (const name of names) {
+      const actual = session.getToolDefinition(name);
+      const expected = native[name];
+      assert.ok(actual, name);
+      assert.ok(expected, name);
+      assert.equal(actual.renderShell, "self", name);
+      assert.equal(actual.name, expected.name, name);
+      assert.equal(actual.label, expected.label, name);
+      assert.equal(actual.description, expected.description, name);
+      assert.deepEqual(actual.parameters, expected.parameters, name);
+      assert.equal(actual.promptSnippet, expected.promptSnippet, name);
+      assert.deepEqual(
+        actual.promptGuidelines,
+        expected.promptGuidelines,
+        name,
+      );
+    }
+
     const bash = session.getToolDefinition("bash");
     const write = session.getToolDefinition("write");
     const edit = session.getToolDefinition("edit");
-    assert.ok(bash?.renderCall);
-    assert.ok(bash?.renderResult);
-    assert.ok(write?.renderCall);
-    assert.ok(edit?.renderCall);
-    assert.match(bash?.description ?? "", /Execute a bash command/);
-    assert.match(write?.description ?? "", /Creates the file/);
-    assert.match(edit?.description ?? "", /exact text replacement/);
 
-    const renderWrite = write.renderCall;
+    const renderWrite = write?.renderCall;
     assert.ok(renderWrite);
     const identityTheme = new Proxy(
       {},
@@ -99,11 +133,12 @@ test("overrides rendering while retaining native Bash/Write/Edit execution", asy
       renderWrite(args, identityTheme, renderContext).render(100).length,
       1,
     );
-    assert.ok(
+    assert.equal(
       renderWrite(args, identityTheme, {
         ...renderContext,
         argsComplete: true,
-      }).render(100).length <= 4,
+      }).render(100).length,
+      1,
     );
 
     const ctx = {
@@ -147,4 +182,43 @@ test("overrides rendering while retaining native Bash/Write/Edit execution", asy
       "after\n",
     );
   });
+});
+
+test("real ToolExecutionComponent toggles between one activity row and native evidence", () => {
+  const definition = withActivityRenderer(
+    createBashToolDefinition("/workspace"),
+  );
+  const ui = { requestRender() {} } as unknown as TUI;
+  const component = new ToolExecutionComponent(
+    "bash",
+    "bash-component",
+    { command: "printf alpha" },
+    { showImages: false },
+    definition,
+    ui,
+    "/workspace",
+  );
+  component.markExecutionStarted();
+  component.setArgsComplete();
+  component.updateResult({
+    content: [{ type: "text", text: "alpha" }],
+    isError: false,
+  });
+
+  const nonEmpty = () =>
+    component
+      .render(80)
+      .map((line) => stripVTControlCharacters(line))
+      .filter((line) => line.trim().length > 0);
+
+  assert.equal(nonEmpty().length, 1);
+  assert.match(nonEmpty()[0] ?? "", /Ran\s+printf alpha/);
+
+  component.setExpanded(true);
+  const expanded = nonEmpty();
+  assert.ok(expanded.length > 1);
+  assert.match(expanded.join("\n"), /alpha/);
+
+  component.setExpanded(false);
+  assert.equal(nonEmpty().length, 1);
 });

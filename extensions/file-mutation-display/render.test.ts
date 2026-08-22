@@ -1,86 +1,330 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
-import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
 import {
-  BASH_OUTPUT_PREVIEW_LINES,
-  compactBashRenderedComponent,
-  compactRenderedComponent,
-  FILE_MUTATION_PREVIEW_LINES,
-  singleLineRenderedComponent,
-} from "./render.ts";
+  createBashToolDefinition,
+  createEditToolDefinition,
+  createFindToolDefinition,
+  createGrepToolDefinition,
+  createLsToolDefinition,
+  createReadToolDefinition,
+  createWriteToolDefinition,
+  initTheme,
+  type AgentToolResult,
+  type Theme,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { withActivityRenderer } from "./render.ts";
 
 initTheme("dark", false);
 
-const theme = {
-  fg: (_color: string, text: string) => text,
-} as Theme;
+const theme = new Proxy(
+  {},
+  {
+    get: (_target, property) =>
+      property === "fg" || property === "bg"
+        ? (_color: string, text: string) => text
+        : (text: string) => text,
+  },
+) as Theme;
 
-function component(lines: string[]): Component {
-  return {
-    render: () => lines,
-    invalidate() {},
-  };
+const cwd = "/workspace";
+
+function modelSurfaceHash(definition: ToolDefinition<any, any, any>) {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        name: definition.name,
+        description: definition.description,
+        parameters: definition.parameters,
+        promptSnippet: definition.promptSnippet,
+        promptGuidelines: definition.promptGuidelines,
+        constrainedSampling: definition.constrainedSampling,
+        prepareArguments: definition.prepareArguments?.toString(),
+        executionMode: definition.executionMode,
+      }),
+    )
+    .digest("hex");
 }
 
-test("keeps short file mutation renderings unchanged", () => {
-  const lines = ["edit file.ts", "+ one line"];
-  assert.deepEqual(
-    compactRenderedComponent(component(lines), theme).render(80),
-    lines,
+const fixtures: Array<{
+  name: string;
+  icon: string;
+  definition: ToolDefinition<any, any, any>;
+  args: Record<string, any>;
+  result: AgentToolResult<any>;
+  success: RegExp;
+}> = [
+  {
+    name: "read",
+    icon: "\ueaa4",
+    definition: createReadToolDefinition(cwd),
+    args: { path: `${cwd}/src/long-file.ts`, offset: 10, limit: 20 },
+    result: {
+      content: [{ type: "text", text: "one\ntwo" }],
+      details: undefined,
+    },
+    success: /Read\s+src\/long-file\.ts:10-29/,
+  },
+  {
+    name: "bash",
+    icon: "\uea85",
+    definition: createBashToolDefinition(cwd),
+    args: { command: 'rg -n "renderCall|renderResult" extensions' },
+    result: {
+      content: [{ type: "text", text: "one\ntwo" }],
+      details: undefined,
+    },
+    success: /Ran\s+rg -n/,
+  },
+  {
+    name: "write",
+    icon: "\uea73",
+    definition: createWriteToolDefinition(cwd),
+    args: { path: "src/new.ts", content: "one\ntwo\nthree\n" },
+    result: {
+      content: [
+        {
+          type: "text",
+          text: "Successfully wrote 14 bytes to src/new.ts",
+        },
+      ],
+      details: undefined,
+    },
+    success: /Wrote\s+src\/new\.ts\s+3 lines/,
+  },
+  {
+    name: "edit",
+    icon: "\uea73",
+    definition: createEditToolDefinition(cwd),
+    args: {
+      path: "README.md",
+      edits: [{ oldText: "old", newText: "new\nsecond" }],
+    },
+    result: {
+      content: [
+        {
+          type: "text",
+          text: "Successfully replaced 1 block(s) in README.md.",
+        },
+      ],
+      details: {
+        diff: "  before\n-old\n+new\n+second\n  after",
+        patch: "@@ -1 +1,2 @@\n-old\n+new\n+second",
+      },
+    },
+    success: /Edited\s+README\.md\s+\+2\s+−1/,
+  },
+  {
+    name: "grep",
+    icon: "\uea6d",
+    definition: createGrepToolDefinition(cwd),
+    args: { pattern: "renderCall", path: "extensions" },
+    result: {
+      content: [
+        {
+          type: "text",
+          text: "a.ts:1:renderCall\nb.ts:2:renderCall",
+        },
+      ],
+      details: undefined,
+    },
+    success: /Searched\s+renderCall\s+in extensions\s+2 matches/,
+  },
+  {
+    name: "find",
+    icon: "\uea6d",
+    definition: createFindToolDefinition(cwd),
+    args: { pattern: "**/*.ts", path: "extensions" },
+    result: {
+      content: [{ type: "text", text: "a.ts\nb.ts\nc.ts" }],
+      details: undefined,
+    },
+    success: /Searched\s+\*\*\/\*\.ts\s+in extensions\s+3 results/,
+  },
+  {
+    name: "ls",
+    icon: "\uea83",
+    definition: createLsToolDefinition(cwd),
+    args: { path: cwd },
+    result: {
+      content: [{ type: "text", text: "a/\nb/\nfile.ts" }],
+      details: undefined,
+    },
+    success: /Listed\s+\.\s+3 entries/,
+  },
+];
+
+function renderCollapsed(
+  definition: ToolDefinition<any, any, any>,
+  args: Record<string, unknown>,
+  result?: AgentToolResult<any>,
+  isError = false,
+  width = 120,
+) {
+  const state = {};
+  const context = {
+    args,
+    toolCallId: "call-1",
+    invalidate() {},
+    lastComponent: undefined,
+    state,
+    cwd,
+    executionStarted: true,
+    argsComplete: true,
+    isPartial: result === undefined,
+    expanded: false,
+    showImages: false,
+    isError,
+  };
+  const call = definition.renderCall?.(args, theme, context);
+  assert.ok(call);
+  let resultComponent: Component | undefined;
+  if (result) {
+    resultComponent = definition.renderResult?.(
+      result,
+      { expanded: false, isPartial: false },
+      theme,
+      { ...context, isPartial: false, isError },
+    );
+  }
+  return [
+    ...call.render(width),
+    ...(resultComponent?.render(width) ?? []),
+  ].filter((line) => line.trim().length > 0);
+}
+
+test("all activity tools render one semantic success row", () => {
+  for (const fixture of fixtures) {
+    const definition = withActivityRenderer(fixture.definition);
+    const lines = renderCollapsed(definition, fixture.args, fixture.result);
+    assert.equal(lines.length, 1, fixture.name);
+    assert.equal(lines[0]?.at(2), fixture.icon, fixture.name);
+    assert.ok(lines[0]?.startsWith("  "), fixture.name);
+    assert.ok(lines[0]?.endsWith("  "), fixture.name);
+    assert.match(lines[0] ?? "", fixture.success, fixture.name);
+  }
+});
+
+test("wrapping changes only renderer slots and shell ownership", () => {
+  for (const fixture of fixtures) {
+    const native = fixture.definition;
+    const wrapped = withActivityRenderer(native);
+    assert.equal(wrapped.name, native.name, fixture.name);
+    assert.equal(wrapped.label, native.label, fixture.name);
+    assert.equal(wrapped.description, native.description, fixture.name);
+    assert.equal(wrapped.parameters, native.parameters, fixture.name);
+    assert.equal(wrapped.promptSnippet, native.promptSnippet, fixture.name);
+    assert.equal(
+      wrapped.promptGuidelines,
+      native.promptGuidelines,
+      fixture.name,
+    );
+    assert.equal(wrapped.execute, native.execute, fixture.name);
+    assert.equal(wrapped.renderShell, "self", fixture.name);
+    assert.equal(
+      modelSurfaceHash(wrapped),
+      modelSurfaceHash(native),
+      `${fixture.name} model surface hash`,
+    );
+  }
+});
+
+test("all activity tools render pending and failure as one explicit row", () => {
+  for (const fixture of fixtures) {
+    const definition = withActivityRenderer(fixture.definition);
+    const pending = renderCollapsed(definition, fixture.args);
+    assert.equal(pending.length, 1, `${fixture.name} pending`);
+    assert.match(pending[0] ?? "", /^ {2}◌ /, `${fixture.name} pending`);
+    assert.ok(pending[0]?.endsWith("  "), `${fixture.name} pending`);
+
+    const failed = renderCollapsed(
+      definition,
+      fixture.args,
+      {
+        content: [
+          {
+            type: "text",
+            text: "Permission denied\nfull diagnostic follows",
+          },
+        ],
+        details: undefined,
+      },
+      true,
+    );
+    assert.equal(failed.length, 1, `${fixture.name} failed`);
+    assert.match(failed[0] ?? "", /^ {2}✕ Failed\s+/, `${fixture.name} failed`);
+    assert.ok(failed[0]?.endsWith("  "), `${fixture.name} failed`);
+    assert.match(failed[0] ?? "", /Permission denied/, fixture.name);
+  }
+});
+
+test("long activity rows stay one line and fit narrow terminals", () => {
+  const definition = withActivityRenderer(createBashToolDefinition(cwd));
+  const lines = renderCollapsed(
+    definition,
+    {
+      command:
+        "bun run test --filter a-very-long-suite-name-that-cannot-fit-on-screen",
+    },
+    undefined,
+    false,
+    24,
   );
+  assert.equal(lines.length, 1);
+  assert.ok(visibleWidth(lines[0]!) <= 24);
+  assert.match(lines[0] ?? "", /^ {2}◌ Running\s+bun/);
+  assert.ok(lines[0]?.endsWith("  "));
 });
 
-test("bounds long file mutation renderings and exposes the expand hint", () => {
-  const lines = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`);
-  const rendered = compactRenderedComponent(component(lines), theme).render(80);
+test("expanded mode delegates call and result to Pi native renderers", () => {
+  for (const fixture of fixtures) {
+    const native = fixture.definition;
+    const wrapped = withActivityRenderer(native);
+    const state = {};
+    const context = {
+      args: fixture.args,
+      toolCallId: "call-expanded",
+      invalidate() {},
+      lastComponent: undefined,
+      state,
+      cwd,
+      executionStarted: true,
+      argsComplete: true,
+      isPartial: false,
+      expanded: true,
+      showImages: false,
+      isError: false,
+    };
+    const expectedCall = native.renderCall
+      ? native.renderCall(fixture.args, theme, context).render(100)
+      : [];
+    const actualCall = wrapped.renderCall
+      ? wrapped.renderCall(fixture.args, theme, context).render(100)
+      : [];
+    assert.deepEqual(actualCall, expectedCall, `${fixture.name} call`);
 
-  assert.equal(rendered.length, FILE_MUTATION_PREVIEW_LINES + 1);
-  assert.deepEqual(
-    rendered.slice(0, FILE_MUTATION_PREVIEW_LINES),
-    lines.slice(0, FILE_MUTATION_PREVIEW_LINES),
-  );
-  assert.match(rendered.at(-1) ?? "", /17 more lines/);
-  assert.match(rendered.at(-1) ?? "", /expand/);
-});
-
-test("renders the file-mutation fold hint inside its status background", () => {
-  const lines = Array.from({ length: 6 }, (_, index) => `line ${index + 1}`);
-  const rendered = compactRenderedComponent(
-    component(lines),
-    theme,
-    3,
-    (text) => `<green>${text}</green>`,
-  ).render(40);
-
-  assert.match(rendered.at(-1) ?? "", /^<green>… 3 more lines.*<\/green>$/);
-});
-
-test("collapses wrapped Bash commands to one visual row", () => {
-  const rendered = singleLineRenderedComponent(
-    component(["$ very long command", "continued", "continued again"]),
-    theme,
-  ).render(80);
-
-  assert.deepEqual(rendered, ["$ very long command …"]);
-});
-
-test("compact Bash output preserves one row, warnings, and final timing", () => {
-  const lines = [
-    "",
-    "... (12 earlier lines, Ctrl+O to expand)",
-    "first",
-    "second",
-    "[Truncated: showing 2 of 20 lines]",
-    "Took 1.2s",
-  ];
-  const rendered = compactBashRenderedComponent(component(lines), theme).render(
-    80,
-  );
-
-  assert.equal(rendered[0], "first");
-  assert.match(rendered[1] ?? "", /13 more lines.*expand/);
-  assert.equal(rendered[2], "[Truncated: showing 2 of 20 lines]");
-  assert.equal(rendered[3], "Took 1.2s");
-  assert.equal(BASH_OUTPUT_PREVIEW_LINES, 1);
+    const expectedResult = native.renderResult
+      ? native
+          .renderResult(
+            fixture.result,
+            { expanded: true, isPartial: false },
+            theme,
+            context,
+          )
+          .render(100)
+      : [];
+    const actualResult = wrapped.renderResult
+      ? wrapped
+          .renderResult(
+            fixture.result,
+            { expanded: true, isPartial: false },
+            theme,
+            context,
+          )
+          .render(100)
+      : [];
+    assert.deepEqual(actualResult, expectedResult, `${fixture.name} result`);
+  }
 });
