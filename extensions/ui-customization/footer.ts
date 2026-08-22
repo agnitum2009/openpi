@@ -152,6 +152,18 @@ function defaultPullRequest(number: number, url: string) {
 }
 
 /**
+ * Small Unicode icons for footer metrics — no Nerd Font required, and every
+ * glyph stays a single cell wide (📁 is the one emoji, measured at width 2).
+ */
+function contextGauge(percent: number | null) {
+  if (percent === null) return "○";
+  if (percent < 25) return "◔";
+  if (percent < 50) return "◑";
+  if (percent < 75) return "◕";
+  return "●";
+}
+
+/**
  * Build the value catalog for every FooterItem. Empty text means "not available
  * right now" and the segment is omitted from the line.
  */
@@ -179,11 +191,13 @@ export function buildSegmentCatalog(
     : modelInfo.modelId;
 
   return {
-    cwd: { text: formatDirectory(cwd), tone: "text" },
-    model: { text: modelText, tone: "muted" },
+    cwd: { text: `📁 ${formatDirectory(cwd)}`, tone: "text" },
+    model: { text: `✦ ${modelText}`, tone: "muted" },
     thinking: { text: modelInfo.thinking, tone: "muted" },
     context: {
-      text: contextText,
+      text: contextText
+        ? `${contextGauge(modelInfo.contextPercent)} ${contextText}`
+        : "",
       tone: contextTone(modelInfo.contextPercent),
     },
     cache: {
@@ -201,7 +215,7 @@ export function buildSegmentCatalog(
           : `~${Math.round(modelInfo.tokensPerSecond)} tok/s`,
       tone: "muted",
     },
-    git: { text: gitInfo.branch ?? "", tone: "muted" },
+    git: { text: gitInfo.branch ? `⎇ ${gitInfo.branch}` : "", tone: "muted" },
     pr: {
       text: gitInfo.pullRequest
         ? formatPullRequest(gitInfo.pullRequest.number, gitInfo.pullRequest.url)

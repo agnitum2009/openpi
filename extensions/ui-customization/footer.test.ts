@@ -278,8 +278,8 @@ test("legacy buildFooterContent still groups selected items", () => {
   ]);
   assert.deepEqual(content, {
     showCwd: false,
-    model: "seal/gpt-5.6-sol",
-    usage: "25%/1.0m · cache 82%",
+    model: "✦ seal/gpt-5.6-sol",
+    usage: "◑ 25%/1.0m · cache 82%",
     git: "",
   });
 });

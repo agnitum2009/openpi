@@ -323,13 +323,13 @@ Next-action Suggestion 是可选的：完整主 Agent Run 结束后，在空编�
 
 ## 终端体验
 
-默认 Footer 把真实运行状态压进一行：
+默认 Footer 把真实运行状态压进一行，指标自带小图标（无需 Nerd Font):
 
 ```text
-cwd  git  PR                model  context
+📁 cwd  ⎇ git  PR                ✦ model  ◔ context
 ```
 
-`thinking`、`cache`、`cost`、`throughput` 也是可选指标，可通过 `/openpi-setup` 加入自定义布局。
+`📁` 目录、`⎇` 分支、`✦` 模型；context 的圆环随占用率填充（`◔◑◕●`)。`thinking`、`cache`、`cost`、`throughput` 也是可选指标，可通过 `/openpi-setup` 加入自定义布局。
 
 - 支持 `powerline`、`powerline-mono`、`compact`，也支持自定义多行布局；
 - 终端变窄时按优先级隐藏次要指标，不机械截断尾部；
