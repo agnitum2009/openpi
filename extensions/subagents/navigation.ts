@@ -155,22 +155,34 @@ export class SubagentStripWidget {
     const marker = this.strip.focused
       ? this.theme.fg("accent", "❯")
       : statusGlyph(snapshot, this.theme, Date.now());
-    const settled = counts.done + counts.failed;
+    // A name only means something when it names the only active subagent; with
+    // several, an aggregate label is honest and the counts carry the detail
+    // (upstream #59 semantics folded into the local multi-row header).
+    const total = counts.running + counts.done + counts.failed;
+    const single = total === 1;
+    const labelText = single
+      ? normalizeSubagentTitle(snapshot.title, snapshot.id)
+      : "subagents";
+    const label = this.strip.focused
+      ? this.theme.bold(this.theme.fg("accent", labelText))
+      : this.theme.fg("text", labelText); (feat(ui): aggregate the subagent strip when several runs are active (#59))
     const percent = contextPercent(snapshot.usage);
     const right = renderNavigationMetrics(
       this.theme,
       [
-        running.length > 0 ? `${running.length} running` : undefined,
-        counts.done > 0 ? `${counts.done} done` : undefined,
-        counts.failed > 0 ? `${counts.failed} failed` : undefined,
+        single ? undefined : running.length > 0 ? `${running.length} running` : undefined,
+        single ? undefined : counts.done > 0 ? `${counts.done} done` : undefined,
+        single ? undefined : counts.failed > 0 ? `${counts.failed} failed` : undefined,
         formatElapsed(snapshot),
         percent === undefined ? undefined : `${percent}% ctx`,
       ],
       this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
-      snapshot.status === "running" ? undefined : statusColor(snapshot.status),
+      single || snapshot.status === "running"
+        ? undefined
+        : statusColor(snapshot.status),
     );
     const header = fitNavigationSides(
-      ` ${marker} ${this.theme.fg("text", this.theme.bold("Subagents"))}`,
+      ` ${marker} ${label}`,
       right,
       width,
     );

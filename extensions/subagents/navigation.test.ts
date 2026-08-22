@@ -125,6 +125,7 @@ test("subagent HUD mirrors omp: header plus one row per running subagent", () =>
 });
 
 
+
 test("subagent HUD collapses running rows past its limit", () => {
   const strip = new BelowEditorStripState();
   const now = Date.now();
@@ -252,6 +253,9 @@ test("running rows show intent fallback, failure streak, and stall warning", () 
 
 
 test("the metrics tail stays quiet while a run is healthy", () => {
+
+test("a lone subagent needs no count: glyph and name carry the state", () => {
+ (feat(ui): aggregate the subagent strip when several runs are active (#59))
   const strip = new BelowEditorStripState();
   const render = (status: SubagentSnapshot["status"]) => {
     const entries = [
@@ -277,16 +281,40 @@ test("the metrics tail stays quiet while a run is healthy", () => {
     }
   };
 
-  // A routine run borrows no status colour in its tail: the coloured glyph on
-  // the left already carries the state, and hints recede furthest of all.
+  // One active subagent: the glyph and its name already say what a "1 running"
+  // count would repeat, and hints recede furthest of all.
   const running = render("running");
-  assert.match(running, /<muted>1 running<\/muted>/);
+  assert.match(running, /sa-1/);
+  assert.doesNotMatch(running, /1 running/);
   assert.match(running, /<dim>↓ to manage<\/dim>/);
-  assert.doesNotMatch(running, /<warning>1 running/);
 
-  // Once settled, the one count that carries the outcome takes the colour.
-  assert.match(render("error"), /<error>1 failed<\/error>/);
-  assert.match(render("done"), /<success>1 done<\/success>/);
+  // Once settled, the glyph takes the outcome's colour.
+  assert.match(render("error"), /<error>✗<\/error>/);
+  assert.match(render("done"), /<success>✓<\/success>/);
+});
+
+test("several active subagents aggregate instead of naming just one", () => {
+  const entry = selectSubagentStripEntry(
+    [
+      snapshot("sa-1", "running", Date.now() - 4_000),
+      snapshot("sa-2", "running", Date.now() - 2_000),
+    ],
+    0,
+  );
+  const widget = new SubagentStripWidget(
+    { requestRender() {} } as unknown as TUI,
+    markingTheme,
+    new BelowEditorStripState(),
+    () => entry,
+  );
+  try {
+    const rendered = widget.render(400)[0]!;
+    assert.match(rendered, /subagents/);
+    assert.match(rendered, /<muted>2 running<\/muted>/);
+    assert.doesNotMatch(rendered, /sa-1|sa-2/);
+  } finally {
+    widget.dispose();
+  }
 });
 
 (feat: polish OpenPI UI and stabilize delegate tools (#52))
