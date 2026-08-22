@@ -288,7 +288,7 @@ function renderSubagentResult(
   }
 
   const failed = details.status === "error";
-  const icon = failed ? theme.fg("error", "x") : theme.fg("success", "■");
+  const icon = failed ? theme.fg("error", "x") : theme.fg("success", "✓");
   const header =
     `${icon} ` +
     theme.fg("accent", theme.bold(`subagent ${details.id ?? "?"}`)) +
@@ -414,9 +414,22 @@ export default function (pi: ExtensionAPI) {
   };
 
   const updateStatus = (manager: SubagentManagerShape) => {
-    // Activity is reported by the HUD above the editor (running rows, unread
-    // settled notice, header metrics) — deliberately NOT also pinned to the
-    // footer status bar, so subagent state lives in exactly one place.
+    if (!ui) return;
+    const counts = unreadActivityCounts(
+      manager.view.list(),
+      settledAcknowledgedAt,
+    );
+    // In the TUI the below-editor strip already reports the same activity and
+    // carries the manage affordance, so a footer status line would repeat it
+    // (upstream #53); outside the TUI the footer is the only surface, so it
+    // gets the summary there.
+    const tui = sessionContext?.mode === "tui";
+    ui.setStatus(
+      "subagents",
+      !tui && hasActivity(counts)
+        ? formatActivityStatus(ui.theme, "subagents", counts)
+        : undefined,
+    );
     updateSubagentWidget();
   };
 
@@ -1206,11 +1219,12 @@ export default function (pi: ExtensionAPI) {
     (entry, _options, theme) => {
       const data = entry.data;
       const failed = data?.status === "error";
+      const icon = failed ? theme.fg("error", "x") : theme.fg("success", "✓");
       return new Text(
-        `${theme.fg(failed ? "error" : "success", "\u25cf")} ` +
+        `${icon} ${theme.fg("accent", data?.title ?? "?")}` +
           theme.fg(
-            "muted",
-            `Agent "${data?.title ?? "?"}" ${failed ? "failed" : "finished"} \u00b7 ${data?.elapsed ?? "?"}`,
+            "dim",
+            ` ${failed ? "failed" : "finished"} · ${data?.elapsed ?? "?"}`,
           ),
         1,
         0,
@@ -1223,7 +1237,7 @@ export default function (pi: ExtensionAPI) {
     (entry, { expanded }, theme) => {
       const data = entry.data;
       const failed = data?.status === "error";
-      const icon = failed ? theme.fg("error", "x") : theme.fg("success", "■");
+      const icon = failed ? theme.fg("error", "x") : theme.fg("success", "✓");
       const header =
         `${icon} ` +
         theme.fg("accent", theme.bold(`by the way · ${data?.title ?? "?"}`)) +

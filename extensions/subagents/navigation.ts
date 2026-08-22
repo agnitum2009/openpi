@@ -18,7 +18,7 @@ import {
   lastActivityOf,
   lastIntentOf,
 } from "./src/domain.ts";
-import { formatContextUtilization } from "./src/format.ts";
+import { contextPercent } from "./src/format.ts";
 
 export interface SubagentStripEntry {
   snapshot: SubagentSnapshot;
@@ -66,8 +66,11 @@ function statusColor(status: SubagentSnapshot["status"]) {
   return "error" as const;
 }
 
-function statusSquare(snapshot: SubagentSnapshot, theme: Theme) {
-  return theme.fg(statusColor(snapshot.status), "■");
+/** One status glyph per run state; doubles as the focus marker when selected. */
+function statusGlyph(snapshot: SubagentSnapshot, theme: Theme) {
+  if (snapshot.status === "running") return theme.fg("warning", "●");
+  if (snapshot.status === "done") return theme.fg("success", "✓");
+  return theme.fg("error", "x");
 }
 
 /**
@@ -138,6 +141,7 @@ export class SubagentStripWidget {
     // itself entirely instead of parking an empty header above the prompt.
     if (!entry) return [];
     const { snapshot, counts } = entry;
+
     const running = this.getEntries().filter(
       (item) => item.status === "running",
     );
@@ -145,9 +149,9 @@ export class SubagentStripWidget {
 
     const marker = this.strip.focused
       ? this.theme.fg("accent", "❯")
-      : this.theme.fg("dim", "○");
+      : statusGlyph(snapshot, this.theme);
     const settled = counts.done + counts.failed;
-    const total = counts.running + settled;
+    const percent = contextPercent(snapshot.usage);
     const right = renderNavigationMetrics(
       this.theme,
       [
@@ -155,7 +159,7 @@ export class SubagentStripWidget {
         counts.done > 0 ? `${counts.done} done` : undefined,
         counts.failed > 0 ? `${counts.failed} failed` : undefined,
         formatElapsed(snapshot),
-        formatContextUtilization(snapshot.usage),
+        percent === undefined ? undefined : `${percent}% ctx`,
       ],
       this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
       snapshot.status === "running" ? undefined : statusColor(snapshot.status),
@@ -229,19 +233,6 @@ export class SubagentStripWidget {
       );
     }
     return lines;
-=======
-    const total = counts.running + settled;
-    const right = renderNavigationMetrics(
-      this.theme,
-      [
-        `${settled}/${total} agents`,
-        formatElapsed(snapshot),
-        formatContextUtilization(snapshot.usage),
-      ],
-      this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
-      snapshot.status === "running" ? undefined : statusColor(snapshot.status),
-    );
-    return [fitNavigationSides(left, right, width)];
->>>>>>> 39145c3 (feat: polish OpenPI UI and stabilize delegate tools (#52))
+ (feat: polish OpenPI UI and stabilize delegate tools (#52))
   }
 }

@@ -334,8 +334,8 @@ export class BelowEditorNavigationEditor implements EditorComponent, Focusable {
  * a hint that recedes furthest.
  *
  * The whole tail used to be painted in the status colour, which made a routine
- * "0/1 agents · 9m51s · ↓ to manage" shout as loudly as a failure. The status
- * already has a coloured square on the left edge, so the tail only borrows that
+ * "1 running · 9m51s · ↓ to manage" shout as loudly as a failure. The status
+ * already has a coloured glyph on the left edge, so the tail only borrows that
  * colour for the one count that carries the outcome — and only once the run has
  * settled, where the colour means something.
  */

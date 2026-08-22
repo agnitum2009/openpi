@@ -37,6 +37,13 @@ function cleanLine(value: string) {
 }
 
 /** Live, multi-row workflow HUD above the editor, mirroring the Subagents HUD. */
+/** One status glyph per run state; doubles as the focus marker when selected. */
+function statusGlyph(status: WorkflowStatus, theme: Theme) {
+  if (status === "completed") return theme.fg("success", "✓");
+  if (status === "running") return theme.fg("warning", "●");
+  return theme.fg("error", "x");
+}
+
 export class WorkflowStripWidget {
   private readonly timer: ReturnType<typeof setInterval>;
   private readonly tui: TUI;
@@ -78,16 +85,16 @@ export class WorkflowStripWidget {
     // Header, same shape as the Subagents HUD — but its right-side metrics
     // render in accent rather than warning, so the two stacked panels never
     // blur into one another at a glance.
-    const marker = this.strip.focused
+    const glyph = this.strip.focused
       ? this.theme.fg("accent", "❯")
-      : this.theme.fg("dim", "○");
+      : statusGlyph(details.status, this.theme);
     const displayName = cleanLine(details.name ?? entry.runId) || entry.runId;
     const name = this.strip.focused
       ? this.theme.bold(this.theme.fg("accent", displayName))
       : this.theme.fg("text", displayName);
     const rawContext = details.currentPhase ?? details.description;
     const context = rawContext ? cleanLine(rawContext) : undefined;
-    const left = ` ${marker} ${statusSquare(details.status, this.theme)} ${name}${context ? this.theme.fg("dim", ` · ${context}`) : ""}`;
+    const left = ` ${glyph} ${name}${context ? this.theme.fg("dim", ` · ${context}`) : ""}`;
     const right = renderNavigationMetrics(
       this.theme,
       [
@@ -143,22 +150,7 @@ export class WorkflowStripWidget {
       );
     }
     return lines;
-=======
-    const rawContext = details.currentPhase ?? details.description;
-    const context = rawContext ? cleanLine(rawContext) : undefined;
-    const left = ` ${marker} ${statusSquare(details.status, this.theme)} ${name}${context ? this.theme.fg("dim", ` · ${context}`) : ""}`;
-    const right = renderNavigationMetrics(
-      this.theme,
-      [
-        `${settled}/${details.agents.length} agents`,
-        formatElapsed(details.startedAt, details.finishedAt),
-        tokenCount > 0 ? `${formatTokens(tokenCount)} tokens` : undefined,
-      ],
-      this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
-      details.status === "running" ? undefined : statusColor(details.status),
-    );
-    return [fitNavigationSides(left, right, width)];
->>>>>>> 39145c3 (feat: polish OpenPI UI and stabilize delegate tools (#52))
+ (feat: polish OpenPI UI and stabilize delegate tools (#52))
   }
 }
 

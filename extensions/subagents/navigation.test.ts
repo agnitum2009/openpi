@@ -277,7 +277,7 @@ test("the metrics tail stays quiet while a run is healthy", () => {
     }
   };
 
-  // A routine run borrows no status colour in its tail: the coloured square on
+  // A routine run borrows no status colour in its tail: the coloured glyph on
   // the left already carries the state, and hints recede furthest of all.
   const running = render("running");
   assert.match(running, /<muted>1 running<\/muted>/);

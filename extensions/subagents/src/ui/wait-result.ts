@@ -26,7 +26,7 @@ export function buildWaitResultPreview(
   const results = details?.results ?? [];
   const failed = results.filter((result) => result.status === "error").length;
   const header =
-    theme.fg(failed > 0 ? "warning" : "success", "■") +
+    theme.fg(failed > 0 ? "warning" : "success", failed > 0 ? "!" : "✓") +
     ` ${theme.fg("accent", theme.bold(`${results.length} subagent${results.length === 1 ? "" : "s"} settled`))}` +
     (failed > 0 ? theme.fg("error", ` · ${failed} failed`) : "");
   const lines = [header];

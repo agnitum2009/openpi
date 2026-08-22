@@ -1,7 +1,7 @@
 /**
  * Takeover UI for subagents (ported from v1, rendering from the synchronous
  * SubagentReadModel instead of live pi sessions):
- * - SubagentDashboard: full popup (overlay) listing all subagents.
+ * - SubagentDashboard: compact picker docked above the input, listing all subagents.
  * - TakeoverView: full interactive view of one subagent with an input line
  *   to steer/continue it.
  */
@@ -132,7 +132,14 @@ export async function openSubagentPicker(
         new SubagentDashboard(tui, theme, keybindings, view, selection, done),
       {
         overlay: true,
-        overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%" },
+        // Dock the picker just above the editor (editor + strip + footer ≈ 6
+        // rows) like a command palette, instead of covering the conversation.
+        overlayOptions: {
+          anchor: "bottom-center",
+          width: "100%",
+          maxHeight: "60%",
+          margin: { bottom: 6 },
+        },
       },
     );
 
@@ -144,7 +151,10 @@ export async function openSubagentPicker(
   }
 }
 
-// --- Dashboard (fullscreen overlay) ----------------------------------------------
+// --- Dashboard (picker docked above the input) ---------------------------------
+
+/** A picker is a glance, not a workspace: cap the list window and scroll. */
+const MAX_PICKER_ROWS = 10;
 
 export interface DashboardSelection {
   id?: string;
@@ -270,8 +280,10 @@ export class SubagentDashboard implements Component {
 
     // One timestamp per frame so every row's spinner shows the same frame.
     const now = Date.now();
+    // Docked above the editor, the panel borrows conversation space: cap the
+    // list window and scroll instead of growing toward the top of the screen.
     const rows = this.tui.terminal.rows || 30;
-    const maxBodyHeight = Math.max(1, rows - 5);
+    const maxBodyHeight = Math.min(Math.max(1, rows - 5), MAX_PICKER_ROWS);
     const bodyHeight =
       subs.length > maxBodyHeight ? maxBodyHeight : Math.max(1, subs.length);
     const innerWidth = Math.max(0, width - 2);

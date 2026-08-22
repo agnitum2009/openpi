@@ -1,10 +1,10 @@
 /**
- * /ps UI — two-stage full-screen overlay over the synchronous
- * TerminalReadModel:
- * - TerminalDashboard: list of all tracked terminals (select, kill, open).
- * - TerminalDetailView: read-only inspector for one terminal — metadata,
- *   stdout/stderr toggle, scrolling, live tail. No input surface: background
- *   terminals have no stdin by design.
+ * /ps UI — two-stage inspector over the synchronous TerminalReadModel:
+ * - TerminalDashboard: compact picker docked above the input, listing all
+ *   tracked terminals (select, kill, open).
+ * - TerminalDetailView: full-screen read-only inspector for one terminal —
+ *   metadata, stdout/stderr toggle, scrolling, live tail. No input surface:
+ *   background terminals have no stdin by design.
  */
 
 import type {
@@ -92,7 +92,14 @@ export async function openTerminalPicker(
         new TerminalDashboard(tui, theme, keybindings, view, selection, done),
       {
         overlay: true,
-        overlayOptions: { anchor: "center", width: "100%", maxHeight: "100%" },
+        // Dock the picker just above the editor (editor + strip + footer ≈ 6
+        // rows) like a command palette, instead of blanking the conversation.
+        overlayOptions: {
+          anchor: "bottom-center",
+          width: "100%",
+          maxHeight: "60%",
+          margin: { bottom: 6 },
+        },
       },
     );
 
@@ -111,7 +118,10 @@ export async function openTerminalPicker(
   }
 }
 
-// --- Dashboard (fullscreen overlay) ----------------------------------------------
+// --- Dashboard (picker docked above the input) ---------------------------------
+
+/** A picker is a glance, not a workspace: cap the list window and scroll. */
+const MAX_PICKER_ROWS = 10;
 
 export interface DashboardSelection {
   id?: string;
@@ -228,11 +238,9 @@ class TerminalDashboard implements Component {
     const terminals = this.terminals();
     reconcileDashboardSelection(this.selection, terminals);
 
-    const rows = this.tui.terminal.rows || 30;
-    // Render exactly terminal rows - 1 so the overlay covers the header,
-    // chat, editor, and extra footer lines while leaving pi's final footer
-    // row visible.
-    const bodyHeight = Math.max(6, rows - 5);
+    // Size the panel to its content (bounded, scrolling past the cap) so the
+    // docked picker never covers more conversation than the list needs.
+    const bodyHeight = Math.min(Math.max(terminals.length, 1), MAX_PICKER_ROWS);
     const running = terminals.filter((s) => s.status === "running").length;
     const keys = (binding: Parameters<KeybindingsManager["getKeys"]>[0]) =>
       configuredKeys(this.keybindings, binding);
