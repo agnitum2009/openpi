@@ -117,7 +117,7 @@ test("dashboard box height follows its subagents and retains the old maximum", (
   const one = dashboard([snap("one")], 10);
   try {
     const lines = one.render(100);
-    assert.equal(lines.length, 4); // border, one agent, border, hints
+    assert.equal(lines.length, 5); // air, border, one agent, border, hints
     assert.equal(lines.filter((line) => line.includes("agent one")).length, 1);
   } finally {
     one.dispose();

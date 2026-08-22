@@ -49,14 +49,19 @@ function statusGlyph(
   snap: SubagentSnapshot,
   theme: Theme,
   now = Date.now(),
+  selected = false,
 ): string {
+  // A selected row keeps its state glyph and borrows the accent tone, so the
+  // list never hides what is still running behind a selection marker.
+  const tone = (color: "warning" | "success" | "error") =>
+    selected ? ("accent" as const) : color;
   switch (snap.status) {
     case "running":
-      return theme.fg("warning", spinnerFrame(now));
+      return theme.fg(tone("warning"), spinnerFrame(now));
     case "done":
-      return theme.fg("success", "✓");
+      return theme.fg(tone("success"), "✓");
     case "error":
-      return theme.fg("error", "✗");
+      return theme.fg(tone("error"), "✗");
   }
 }
 
@@ -132,13 +137,13 @@ export async function openSubagentPicker(
         new SubagentDashboard(tui, theme, keybindings, view, selection, done),
       {
         overlay: true,
-        // Dock the picker just above the editor (editor + strip + footer ≈ 6
+        // Dock the picker just above the editor (editor + strip + footer ≈ 5
         // rows) like a command palette, instead of covering the conversation.
         overlayOptions: {
           anchor: "bottom-center",
           width: "100%",
           maxHeight: "60%",
-          margin: { bottom: 6 },
+          margin: { bottom: 5 },
         },
       },
     );
@@ -306,6 +311,8 @@ export class SubagentDashboard implements Component {
     // /workflows. The frame is padded to the rows it was given, which keeps
     // this view's content-fit height rather than reintroducing a fixed one.
     return [
+      // One empty row of air between the conversation and the docked panel.
+      "",
       ...panelFrame(theme, {
         label: `Subagents · ${summary}`,
         rows: rowLines,
@@ -353,13 +360,15 @@ export class SubagentDashboard implements Component {
       const index = start + i;
       const isSelected = index === this.selection.index;
 
-      const marker = isSelected ? theme.fg("accent", "❯") : " ";
+      // One glyph column: a selected row tints its status glyph with the
+      // accent tone instead of stacking a second marker.
+      const glyph = statusGlyph(snap, theme, now, isSelected);
       const safeTitle = sanitizeSubagentDisplayLine(snap.title) || snap.id;
       const title = isSelected
         ? theme.fg("accent", safeTitle)
         : theme.fg("text", safeTitle);
       const activity = runningActivity(snap);
-      const prefix = ` ${marker} ${statusGlyph(snap, theme, now)} `;
+      const prefix = ` ${glyph} `;
 
       const utilization = formatContextUtilization(snap.usage);
       const metadata = [

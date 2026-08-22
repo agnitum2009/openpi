@@ -75,7 +75,7 @@ function statusGlyph(snapshot: SubagentSnapshot, theme: Theme, now: number) {
   if (snapshot.status === "running")
     return theme.fg("warning", spinnerFrame(now));
   if (snapshot.status === "done") return theme.fg("success", "✓");
-  return theme.fg("error", "x");
+  return theme.fg("error", "✗");
 }
 
 /**

@@ -21,6 +21,7 @@ import {
   panelFrame,
   screenTitleLine,
 } from "../../../shared/screen-chrome.ts";
+import { spinnerFrame } from "../../../shared/spinner.ts";
 import {
   formatDuration,
   formatElapsed,
@@ -43,18 +44,30 @@ function configuredKeys(
   return keybindings.getKeys(binding).join("/") || "unbound";
 }
 
-function statusGlyph(snap: TerminalSnapshot, theme: Theme) {
+/**
+ * One status indicator per state, shared by the picker rows and the detail
+ * header. Running spins, in step with every other OpenPI surface. A selected
+ * row keeps its state glyph and borrows the accent tone.
+ */
+function statusGlyph(
+  snap: TerminalSnapshot,
+  theme: Theme,
+  now = Date.now(),
+  selected = false,
+) {
+  const tone = (color: "warning" | "success" | "error" | "muted") =>
+    selected ? ("accent" as const) : color;
   switch (snap.status) {
     case "running":
-      return theme.fg("warning", "■");
+      return theme.fg(tone("warning"), spinnerFrame(now));
     case "done":
-      return theme.fg("success", "■");
+      return theme.fg(tone("success"), "✓");
     case "failed":
-      return theme.fg("error", "■");
+      return theme.fg(tone("error"), "✗");
     case "killed":
-      return theme.fg("muted", "■");
+      return theme.fg(tone("muted"), "✓");
     case "timed_out":
-      return theme.fg("error", "■");
+      return theme.fg(tone("error"), "✗");
   }
 }
 
@@ -92,13 +105,13 @@ export async function openTerminalPicker(
         new TerminalDashboard(tui, theme, keybindings, view, selection, done),
       {
         overlay: true,
-        // Dock the picker just above the editor (editor + strip + footer ≈ 6
+        // Dock the picker just above the editor (editor + strip + footer ≈ 5
         // rows) like a command palette, instead of blanking the conversation.
         overlayOptions: {
           anchor: "bottom-center",
           width: "100%",
           maxHeight: "60%",
-          margin: { bottom: 6 },
+          margin: { bottom: 5 },
         },
       },
     );
@@ -246,6 +259,8 @@ class TerminalDashboard implements Component {
       configuredKeys(this.keybindings, binding);
 
     return [
+      // One empty row of air between the conversation and the docked panel.
+      "",
       screenTitleLine(
         theme,
         "Background terminals",
@@ -294,12 +309,13 @@ class TerminalDashboard implements Component {
       const index = start + i;
       const isSelected = index === this.selection.index;
 
-      // Left: marker, status square, title, dim id
-      const marker = isSelected ? theme.fg("accent", "❯") : " ";
+      // Left: one glyph — a selected row tints its status glyph instead of
+      // stacking a marker — then title and dim id.
+      const glyph = statusGlyph(snap, theme, Date.now(), isSelected);
       const title = isSelected
         ? theme.fg("accent", oneLine(snap.title))
         : theme.fg("text", oneLine(snap.title));
-      const left = ` ${marker} ${statusGlyph(snap, theme)} ${title} ${theme.fg("dim", snap.id)}`;
+      const left = ` ${glyph} ${title} ${theme.fg("dim", snap.id)}`;
 
       // Right: pid · elapsed · exit/status
       const dot = theme.fg("dim", " · ");

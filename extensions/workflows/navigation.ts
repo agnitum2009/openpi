@@ -44,7 +44,7 @@ function cleanLine(value: string) {
 function statusGlyph(status: WorkflowStatus, theme: Theme, now: number) {
   if (status === "completed") return theme.fg("success", "✓");
   if (status === "running") return theme.fg("warning", spinnerFrame(now));
-  return theme.fg("error", "x");
+  return theme.fg("error", "✗");
 }
 
 export class WorkflowStripWidget {
