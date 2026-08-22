@@ -59,13 +59,14 @@ test("default one-line layout keeps flex alignment", () => {
   assert.match(lines[0]!, /project/);
   assert.match(lines[0]!, /seal\/gpt-5\.6-sol/);
   assert.match(lines[0]!, /25%\/1\.0m/);
-  assert.match(lines[0]!, /\$4\.03/);
+  // Cost is an opt-in metric and stays out of the default layout.
+  assert.doesNotMatch(lines[0]!, /\$/);
   assert.match(lines[0]!, /main/);
   assert.match(lines[0]!, /PR #42/);
   const gap =
-    lines[0]!.indexOf("main") -
-    lines[0]!.indexOf("~41 tok/s") -
-    "~41 tok/s".length;
+    lines[0]!.indexOf("seal/gpt-5.6-sol") -
+    lines[0]!.indexOf("PR #42") -
+    "PR #42".length;
   assert.ok(gap > 1);
 });
 

@@ -323,11 +323,13 @@ Next-action Suggestion 是可选的：完整主 Agent Run 结束后，在空编�
 
 ## 终端体验
 
-默认 Powerline Footer 把真实运行状态压进一行：
+默认 Footer 把真实运行状态压进一行：
 
 ```text
-cwd  model  thinking  context  cache  cost  throughput   git  PR
+cwd  git  PR                model  context
 ```
+
+`thinking`、`cache`、`cost`、`throughput` 也是可选指标，可通过 `/openpi-setup` 加入自定义布局。
 
 - 支持 `powerline`、`powerline-mono`、`compact`，也支持自定义多行布局；
 - 终端变窄时按优先级隐藏次要指标，不机械截断尾部；

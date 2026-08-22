@@ -49,6 +49,8 @@ import {
   type MyPiSetupConfig,
 } from "../shared/setup-config.ts";
 
+
+ (feat(ui): drop cost from the default footer layout (#56))
 async function maybeOfferPiIntercom(
   ctx: ExtensionCommandContext,
   status: PiIntercomStatus,
