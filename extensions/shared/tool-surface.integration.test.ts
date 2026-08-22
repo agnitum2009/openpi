@@ -71,6 +71,7 @@ const OPENPI_EXTENSION_PATHS = [
   CAPABILITIES_EXTENSION,
   "../context-pivot/index.ts",
   "../file-search/index.ts",
+  "../git-read/index.ts",
   "../goal/index.ts",
   PLAN_EXTENSION,
   "../setup/index.ts",
@@ -323,6 +324,41 @@ test("real Pi session exposes one stable subagent family when delegate loads", a
       assert.equal(session.systemPrompt, loadedPrompt);
     },
     [SUBAGENTS_EXTENSION],
+  );
+});
+
+test("real Pi search capability exposes file and git tools as one group", async () => {
+  await withSession(
+    [EXPLICIT_CAPABILITIES_EXTENSION],
+    async (session) => {
+      assert.deepEqual(session.getActiveToolNames(), [
+        "read",
+        "bash",
+        "edit",
+        "write",
+      ]);
+      const gateway = session.getToolDefinition("openpi_load_tools");
+      assert.ok(gateway);
+      await gateway.execute(
+        "capability-search",
+        { groups: ["search"] },
+        undefined,
+        undefined,
+        session.createReplacedSessionContext(),
+      );
+      assert.deepEqual(session.getActiveToolNames(), [
+        "read",
+        "bash",
+        "edit",
+        "write",
+        ...OPENPI_TOOL_SURFACE.fileSearch.entry,
+        ...OPENPI_TOOL_SURFACE.gitRead.entry,
+      ]);
+    },
+    [
+      extensionPath("../file-search/index.ts"),
+      extensionPath("../git-read/index.ts"),
+    ],
   );
 });
 

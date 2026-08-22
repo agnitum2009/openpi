@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
-  mkdtempSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -80,6 +80,13 @@ test("only provably read-only agent calls are replay-safe", () => {
     true,
   );
   assert.equal(isReplaySafeAgentCall({ tools: ["read"] }), true);
+  // The read-only git tools are as side-effect-free as fd/rg and replay-safe.
+  assert.equal(
+    isReplaySafeAgentCall({
+      tools: ["read", "git_show", "git_diff", "git_log"],
+    }),
+    true,
+  );
 
   // No type/no allowlist inherits the normal unrestricted child capability set.
   assert.equal(isReplaySafeAgentCall({}), false);
@@ -110,12 +117,19 @@ function replayToolSource(name: string) {
         scope: "user" as const,
         origin: "package" as const,
       }
-    : {
-        path: `<builtin:${name}>`,
-        source: "builtin",
-        scope: "temporary" as const,
-        origin: "top-level" as const,
-      };
+    : name.startsWith("git_")
+      ? {
+          path: "/fixture/extensions/git-read/index.ts",
+          source: "fixture-package",
+          scope: "user" as const,
+          origin: "package" as const,
+        }
+      : {
+          path: `<builtin:${name}>`,
+          source: "builtin",
+          scope: "temporary" as const,
+          origin: "top-level" as const,
+        };
 }
 
 function filesystemTool(name: string, observe: (path: string) => string) {

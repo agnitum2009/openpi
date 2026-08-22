@@ -77,7 +77,7 @@ OpenPI 会把长期进程放到后台，把独立任务交给隔离 Context 的 
 
 > [!TIP]
 > Capability discovery 默认 `explicit`：明确说出能力意图才会加载对应组。
-> 例如「在后台运行 dev server」→ 后台终端；「用/使用子代理检查」→ Subagent；「用工作流编排」→ Workflow；「用 fd/rg 搜索」→ 搜索工具。
+> 例如「在后台运行 dev server」→ 后台终端；「用/使用子代理检查」→ Subagent；「用工作流编排」→ Workflow；「用 fd/rg 搜索」或「用 git diff 比较分支」→ 搜索与只读 Git 工具。
 > 关键是把意图说清楚（说「用子代理」「后台运行」这类带动作的短语），不需要记住任何工具名。
 
 > [!IMPORTANT]
@@ -117,7 +117,7 @@ OpenPI 把成熟 Coding Agent 的工作习惯做成 Pi-native 能力，但不复
 | 连续性       | Tasks、Goal、Plan Mode、Context Pivot、Session Browser、Session-scoped Cron                               |
 | 自定义 Agent | `explorer` / `implementer` / `reviewer` / `advisor`，支持全局与项目角色文件、独立模型与 effort            |
 | 终端工作台   | 自定义 Footer 与任务栏、运行状态、紧凑 Tool Result、Next-action Suggestion、Git / PR 信号                 |
-| 快捷工作流   | `/btw` 旁路提问（TUI）、`/lg` 浏览 Diff（TUI）、`/pr` 查 PR、`/copy-all`、`fd`、`rg`                      |
+| 快捷工作流   | `/btw` 旁路提问（TUI）、`/lg` 浏览 Diff（TUI）、`/pr` 查 PR、`/copy-all`、`fd`、`rg`、只读 Git 工具       |
 | 人类决策     | `ask_user` 草稿与最终复核、parent-only `human_handoff`、Plan Ready 实施门禁                               |
 | 跨 Session   | 可选 parent-only `pi-intercom`；父子通信仍走 Subagent / Workflow 原生通道                                 |
 | 统一配置     | `/openpi-setup` 管理 OpenPI 自有模型、并发、Footer、输出密度与 Post-edit 偏好                             |
@@ -343,7 +343,7 @@ Next-action Suggestion 是可选的：完整主 Agent Run 结束后，在空编�
 - 折叠内容用 Pi 的 `app.tools.expand` 快捷键临时展开，默认 `Ctrl+O`；
 - Git 状态本地刷新；只有显式运行 `/pr` 才查询 GitHub PR。
 
-`fd` 与 `rg` 是结构化模型工具，不拼接 Shell。它们默认遵守 `.gitignore`，支持 Glob、类型、Smart Case、固定字符串与上下文；输出限制为 50 KiB / 2000 行，完整截断内容最多私有保存 10 MiB，并在 Session Shutdown 时清理。
+`fd` 与 `rg` 是结构化模型工具，不拼接 Shell。它们默认遵守 `.gitignore`，支持 Glob、类型、Smart Case、固定字符串与上下文。`git_show`、`git_diff`、`git_log` 以结构化参数提供只读提交、差异和历史检查，并禁用仓库配置的 external diff/textconv。两类工具的输出均限制为 50 KiB / 2000 行，完整截断内容最多私有保存 10 MiB，并在 Session Shutdown 时清理。
 
 macOS/Linux arm64 与 x64 缺少二进制时，OpenPI 会从官方 Release 下载固定版本、校验 SHA-256 后原子安装。其他平台需自行提供 `fd` 与 `rg`。
 
@@ -529,7 +529,7 @@ Capability discovery 默认是 `explicit`：普通父 Session 不常驻任何 Op
 | `context_pivot`                                                                                          | Context 阶段切换               | Context 达到阈值时               |
 | `ask_user`, `human_handoff`                                                                              | 经复核的用户决策与用户专属操作 | Plan 或 Setup 进行中             |
 | `plan_ready`                                                                                             | 显式完成计划，不自动开始实施   | Plan 调研阶段                    |
-| `fd`, `rg`                                                                                               | 文件发现与内容搜索             | 明确意图或 adaptive 加载 search  |
+| `fd`, `rg`, `git_show`, `git_diff`, `git_log`                                                            | 文件、内容与只读 Git 检查      | 明确意图或 adaptive 加载 search  |
 | `configure_my_pi_setup`                                                                                  | 受限配置写入                   | `/openpi-setup` 进行中           |
 
 </details>
@@ -600,6 +600,7 @@ extensions/
 ├── plan-mode/ + cron/     # 批准门禁与 Session 定时 Prompt
 ├── ask-user/              # Reviewed input 与 Human Handoff
 ├── file-search/           # fd / rg 与安全二进制获取
+├── git-read/              # 只读 git show / diff / log
 ├── sessions/              # Session 搜索与切换
 ├── suggestions/           # Ephemeral next-action suggestion
 ├── ui-customization/      # Header、Footer、Terminal title

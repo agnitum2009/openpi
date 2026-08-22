@@ -24,8 +24,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Model } from "@earendil-works/pi-ai";
 import {
-  parseFrontmatter,
   type ModelRegistry,
+  parseFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 import {
   CHILD_EXCLUDED_TOOL_NAMES,
@@ -113,7 +113,17 @@ export interface AgentType {
   readonly source: string;
 }
 
-const READ_ONLY_TOOLS = ["read", "grep", "find", "ls", "fd", "rg"];
+const READ_ONLY_TOOLS = [
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "fd",
+  "rg",
+  "git_show",
+  "git_diff",
+  "git_log",
+];
 
 /**
  * Built-in role definitions are deliberately provider-free: model selection is
@@ -133,7 +143,20 @@ export const BUILT_IN_AGENT_TYPES: readonly AgentType[] = [
   {
     name: "implementer",
     description: "Focused implementation with repository checks.",
-    tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "fd", "rg"],
+    tools: [
+      "read",
+      "bash",
+      "edit",
+      "write",
+      "grep",
+      "find",
+      "ls",
+      "fd",
+      "rg",
+      "git_show",
+      "git_diff",
+      "git_log",
+    ],
     reasoningEffort: "high",
     body: "Implement the requested change carefully. Trace the affected flow first, make the smallest correct edit, and run relevant checks before reporting results.",
     source: "built-in:implementer",

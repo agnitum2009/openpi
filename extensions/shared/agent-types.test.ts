@@ -4,10 +4,14 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import test from "node:test";
+import {
+  CHILD_EXCLUDED_TOOL_NAMES,
+  childToolPolicy,
+} from "../shared/child-session.ts";
 import {
   AGENT_TYPE_LIMITS,
   BUILT_IN_AGENT_TYPES,
@@ -76,7 +80,17 @@ test("built-in roles have exact capability boundaries and no model defaults", ()
     [
       {
         name: "explorer",
-        tools: ["read", "grep", "find", "ls", "fd", "rg"],
+        tools: [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "fd",
+          "rg",
+          "git_show",
+          "git_diff",
+          "git_log",
+        ],
         effort: "high",
         model: undefined,
       },
@@ -92,19 +106,42 @@ test("built-in roles have exact capability boundaries and no model defaults", ()
           "ls",
           "fd",
           "rg",
+          "git_show",
+          "git_diff",
+          "git_log",
         ],
         effort: "high",
         model: undefined,
       },
       {
         name: "reviewer",
-        tools: ["read", "grep", "find", "ls", "fd", "rg"],
+        tools: [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "fd",
+          "rg",
+          "git_show",
+          "git_diff",
+          "git_log",
+        ],
         effort: "medium",
         model: undefined,
       },
       {
         name: "advisor",
-        tools: ["read", "grep", "find", "ls", "fd", "rg"],
+        tools: [
+          "read",
+          "grep",
+          "find",
+          "ls",
+          "fd",
+          "rg",
+          "git_show",
+          "git_diff",
+          "git_log",
+        ],
         effort: "xhigh",
         model: undefined,
       },

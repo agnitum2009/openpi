@@ -3,8 +3,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import {
   loadSetupConfig,
-  SETUP_CONFIG_CHANGED_CHANNEL,
   type MyPiSetupConfig,
+  SETUP_CONFIG_CHANGED_CHANNEL,
 } from "../shared/setup-config.ts";
 import {
   getLoadedOpenPiCapabilities,
@@ -37,7 +37,7 @@ type OpenPiLoadToolsInput = Static<typeof OpenPiLoadToolsParameters>;
 
 const CAPABILITY_INTENT = {
   search:
-    /\b(?:use|run)\s+(?:fd|rg)\b|\buse\s+(?:structured\s+)?(?:(?:file|code|content)\s+)?search\b|\b(?:structured|fast)\s+(?:file|code|content)\s+search\b|(?:使用|用|运行).{0,8}(?:fd|rg)|结构化(?:文件|代码|内容)搜索/iu,
+    /\b(?:use|run)\s+(?:fd|rg)\b|\buse\s+(?:structured\s+)?(?:(?:file|code|content)\s+)?search\b|\b(?:structured|fast)\s+(?:file|code|content)\s+search\b|(?:使用|用|运行).{0,8}(?:fd|rg|git\s+(?:show|diff|log))|结构化(?:文件|代码|内容)搜索/iu,
   delegate:
     /\b(?:use|spawn|run)\s+(?:an?\s+|multiple\s+|several\s+|two\s+)?(?:pi\s+)?subagents?\b|(?:^|[.!?]\s+)(?:please\s+)?(?:delegate|parallelize)\s+(?:this|the)\s+(?:task|work)\b|\b(?:can|could|would)\s+you\s+(?:please\s+)?(?:delegate|parallelize)\s+(?:this|the)\s+(?:task|work)\b|\bparallel\s+agents?\b|(?:使用|用|启动|调用|来|开).{0,8}子代理|(?:多个?|多路)子代理|并行.{0,8}(?:代理|agent)|委派.{0,6}(?:任务|给|出去)/iu,
   workflow:

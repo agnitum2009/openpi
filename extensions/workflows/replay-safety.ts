@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
@@ -17,6 +17,9 @@ const REPLAY_FILESYSTEM_TOOL_NAMES = new Set([
   "ls",
   "fd",
   "rg",
+  "git_show",
+  "git_diff",
+  "git_log",
 ]);
 const REPLAY_BUILTIN_FILESYSTEM_TOOL_NAMES = new Set([
   "read",
@@ -24,7 +27,13 @@ const REPLAY_BUILTIN_FILESYSTEM_TOOL_NAMES = new Set([
   "find",
   "ls",
 ]);
-const REPLAY_PACKAGE_FILESYSTEM_TOOL_NAMES = new Set(["fd", "rg"]);
+const REPLAY_PACKAGE_FILESYSTEM_TOOL_NAMES = new Set([
+  "fd",
+  "rg",
+  "git_show",
+  "git_diff",
+  "git_log",
+]);
 const GIT_OUTPUT_LIMIT = 32 * 1024 * 1024;
 const REPLAY_IDENTITY_TIMEOUT_MS = 5_000;
 const REPLAY_RESOURCE_FILE_LIMIT = 8 * 1024 * 1024;
@@ -179,12 +188,13 @@ function hasKnownReplayFilesystemImplementation(tool: {
     );
   }
   if (!REPLAY_PACKAGE_FILESYSTEM_TOOL_NAMES.has(tool.name)) return false;
+  // fd/rg come from file-search; the read-only git tools from git-read.
+  const ownerSourceSuffix = tool.name.startsWith("git_")
+    ? "/extensions/git-read/index.ts"
+    : "/extensions/file-search/index.ts";
   return (
     tool.sourceInfo?.origin === "package" &&
-    tool.sourceInfo.path
-      .split(path.sep)
-      .join("/")
-      .endsWith("/extensions/file-search/index.ts")
+    tool.sourceInfo.path.split(path.sep).join("/").endsWith(ownerSourceSuffix)
   );
 }
 

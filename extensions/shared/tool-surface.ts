@@ -17,6 +17,10 @@ export const OPENPI_TOOL_SURFACE = {
     entry: ["fd", "rg"],
     deferred: [],
   },
+  gitRead: {
+    entry: ["git_show", "git_diff", "git_log"],
+    deferred: [],
+  },
   subagents: {
     entry: [
       "subagent_spawn",
@@ -66,8 +70,9 @@ export type OpenPiToolOwner = keyof typeof OPENPI_TOOL_SURFACE;
 
 export const OPENPI_CAPABILITY_GROUPS = {
   search: {
-    owners: ["fileSearch"],
-    summary: "Fast structured file and content search with fd and rg.",
+    owners: ["fileSearch", "gitRead"],
+    summary:
+      "Fast structured file and content search (fd, rg) plus read-only git inspection (git_show, git_diff, git_log).",
   },
   delegate: {
     owners: ["subagents"],
@@ -137,6 +142,7 @@ const OWNER_SOURCE_PATHS = {
   fileSearch: fileURLToPath(
     new URL("../file-search/index.ts", import.meta.url),
   ),
+  gitRead: fileURLToPath(new URL("../git-read/index.ts", import.meta.url)),
   subagents: fileURLToPath(new URL("../subagents/index.ts", import.meta.url)),
   workflows: fileURLToPath(new URL("../workflows/index.ts", import.meta.url)),
   background: fileURLToPath(

@@ -1,18 +1,24 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   createAgentSession,
   DefaultResourceLoader,
   defineTool,
   ProjectTrustStore,
   SessionManager,
-  SettingsManager,
   type SessionShutdownEvent,
+  SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import capabilities from "../capabilities/index.ts";
@@ -21,11 +27,11 @@ import {
   CHILD_EXCLUDED_TOOL_NAMES,
   CHILD_SAFE_PACKAGE_TOOL_NAMES,
   childToolPolicy,
-  effectiveChildToolAllowlist,
   createChildResources,
+  type DisposableChildSession,
+  effectiveChildToolAllowlist,
   resolveStandaloneChildProjectTrust,
   shutdownAndDisposeChildSession,
-  type DisposableChildSession,
 } from "./child-session.ts";
 
 async function withTempDir(run: (directory: string) => Promise<void>) {

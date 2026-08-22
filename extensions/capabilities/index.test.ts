@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { SETUP_CONFIG_CHANGED_CHANNEL } from "../shared/setup-config.ts";
 import {
   OPENPI_TOOL_SURFACE,
   patchOwnedTools,
 } from "../shared/tool-surface.ts";
-import { SETUP_CONFIG_CHANGED_CHANNEL } from "../shared/setup-config.ts";
 import { createCapabilitiesExtension } from "./index.ts";
 
 interface CapturedTool {
@@ -50,6 +50,9 @@ function harness(options: { discovery?: "explicit" | "adaptive" } = {}) {
     "bg_list",
     "bg_kill",
     "bg_watch",
+    "git_show",
+    "git_diff",
+    "git_log",
   ];
   let active = [...available];
   const tools = new Map<string, CapturedTool>();
@@ -93,6 +96,9 @@ function harness(options: { discovery?: "explicit" | "adaptive" } = {}) {
   starts.push(() => {
     patchOwnedTools(pi, "fileSearch", {
       enable: OPENPI_TOOL_SURFACE.fileSearch.entry,
+    });
+    patchOwnedTools(pi, "gitRead", {
+      enable: OPENPI_TOOL_SURFACE.gitRead.entry,
     });
     patchOwnedTools(pi, "subagents", {
       enable: OPENPI_TOOL_SURFACE.subagents.entry,
@@ -260,6 +266,7 @@ test("the README quick-start example and its advertised phrases load capabilitie
     ["使用工作流编排", "workflow"],
     ["用 fd 搜索", "fd"],
     ["使用 rg 搜索", "rg"],
+    ["用 git diff 比较分支", "git_diff"],
   ];
   for (const [phrase, tool] of advertised) {
     const h = harness();
@@ -329,7 +336,13 @@ test("capability loads are monotonic and activate only the requested group", asy
     groups: ["search"],
   });
   assert.deepEqual(first.details.newlyLoaded, ["search"]);
-  assert.deepEqual(first.details.activatedTools, ["fd", "rg"]);
+  assert.deepEqual(first.details.activatedTools, [
+    "fd",
+    "rg",
+    "git_show",
+    "git_diff",
+    "git_log",
+  ]);
   assert.deepEqual(h.active(), [
     "read",
     "bash",
@@ -338,6 +351,9 @@ test("capability loads are monotonic and activate only the requested group", asy
     "openpi_load_tools",
     "fd",
     "rg",
+    "git_show",
+    "git_diff",
+    "git_log",
   ]);
 
   const second = await h.tool().execute("call-2", {

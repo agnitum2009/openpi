@@ -163,7 +163,17 @@ function fakeAgentSession(output: string) {
   const listeners = new Set<AgentSessionEventListener>();
   // The reviewer agent type requests the read-only tool surface; the child
   // preflight in bindChildSessionExtensions requires all of them active.
-  const toolNames = ["read", "grep", "find", "ls", "fd", "rg"];
+  const toolNames = [
+    "read",
+    "grep",
+    "find",
+    "ls",
+    "fd",
+    "rg",
+    "git_show",
+    "git_diff",
+    "git_log",
+  ];
   const messages = [
     { role: "user", content: "fixture prompt", timestamp: 1 },
     {

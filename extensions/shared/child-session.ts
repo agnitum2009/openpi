@@ -28,7 +28,13 @@ export const CHILD_BIND_TIMEOUT_MS = 10_000;
  * `registerTool(createEditToolDefinition(...))`); an unrecognized factory
  * registration fails the guard rather than escaping it.
  */
-export const CHILD_SAFE_PACKAGE_TOOL_NAMES = ["fd", "rg"] as const;
+export const CHILD_SAFE_PACKAGE_TOOL_NAMES = [
+  "fd",
+  "rg",
+  "git_show",
+  "git_diff",
+  "git_log",
+] as const;
 
 /**
  * pi-intercom resources are unsafe inside concurrent in-process child sessions.
