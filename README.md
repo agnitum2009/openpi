@@ -422,16 +422,68 @@ macOS/Linux arm64 与 x64 缺少二进制时，OpenPI 会从官方 Release 下�
 - npm 安装：`pi install npm:@tt-a1i/openpi`；
 - GitHub 安装：`pi install git:github.com/tt-a1i/openpi`。
 
-开发当前源码：
+#### 开发运行时：区分 npm 与当前源码
+
+npm 制品、GitHub 安装和本地 checkout 是三个不同的运行资产。源码目录更新、测试通过或版本号相同，都不能证明当前 Pi 已经加载这份代码。所有本地开发、Provider 兼容排查、手工 smoke 和 UI 验收都使用下面这一条证据链。
+
+**1. 先固定源码和加载来源**
+
+```bash
+git status --short --branch
+git rev-parse --short HEAD
+pi list
+```
+
+完成标准：知道正在修改哪个 checkout、分支和提交；`pi list` 中只有一个 OpenPI 来源，并能明确它是 npm、GitHub 还是某个本地绝对路径。其他 Pi package（例如 `pi-intercom`）不属于重复 OpenPI 来源。
+
+**2. 开发时让 Pi 直接加载当前 checkout**
 
 ```bash
 git clone https://github.com/tt-a1i/openpi.git ~/work/openpi
 cd ~/work/openpi
 bun install --frozen-lockfile
-pi install ~/work/openpi
+
+# 若 pi list 显示了旧 OpenPI，把变量设为它显示的 package spec 或绝对路径。
+OLD_OPENPI_SOURCE=/absolute/path/to/old/openpi
+pi remove "$OLD_OPENPI_SOURCE"
+pi install "$PWD"
+pi list
 ```
 
-安装或更新后重启 Pi，或运行 `/reload`。Host SDK 与 TypeBox 按 Pi Package 契约声明为 Peer Dependencies；仓库开发依赖不随包重复提供。
+已经安装当前 checkout 时，不需要反复 remove/install。切换分支或修改源码后，运行 `/reload` 或重启 Pi 才会重载扩展。`/reload` 之前的界面和工具集合只证明旧内存状态。
+
+完成标准：`pi list` 唯一的 OpenPI 路径就是当前 checkout，且该路径的 HEAD 与预期提交一致。不要修改 `~/.pi/agent/npm/node_modules/@tt-a1i/openpi` 来冒充源码修复。
+
+**3. 分层验证改动**
+
+```bash
+# 开发环：先运行与改动最接近的测试，并沿用 package.json 的 runner。
+node --test --experimental-strip-types path/to/relevant.test.ts
+bunx vitest run path/to/relevant.spec.ts
+
+# 仓库门禁：提交或交付前两项都要通过。
+bun run check
+bun run test
+```
+
+自动化通过只证明代码、类型和测试合同。涉及运行时或界面时，还要在已 `/reload` 的真实 Pi 中完成对应 smoke：
+
+- 工具或生命周期改动：在普通工具模式实际触发成功、失败和结束路径；
+- Provider 兼容改动：保留正常工具 Schema，不用 `--no-tools` 绕过问题；
+- UI 改动：在真实 TUI 触发目标状态并肉眼检查，必要时保存截图；
+- 配置改动：通过 `/openpi-setup` 写入，再核对无参数状态输出和实际行为。
+
+完成标准：分别记录 checkout HEAD、`pi list` 来源、专项测试、`bun run check`、完整测试和手工 smoke。没有执行的层级写成“未验证”，不能用另一层的绿色结果代替。
+
+**4. 保持工作区可恢复**
+
+- 开始前检查 dirty worktree；保存用户的未提交、未跟踪和 ignored 文件；
+- 本地 Benchmark、日志和原始结果可以通过 `.git/info/exclude` 隐藏，但 ignore 不是备份；
+- 使用 `git clean -nd` 只能预览普通未跟踪文件；不要运行会删除 ignored 资产的 `git clean -fdx`；
+- 稳定运行副本和开发 checkout 只有在确有隔离需求时才并存，并始终用 `pi list` 说明 Pi 加载哪一个；
+- 提交前复查 diff，确保本地配置、密钥、模型结果和评测原始数据没有进入版本控制。
+
+Host SDK 与 TypeBox 按 Pi Package 契约声明为 Peer Dependencies；仓库开发依赖不随包重复提供。
 
 ### 可选：顶层 Pi Session 通信
 
