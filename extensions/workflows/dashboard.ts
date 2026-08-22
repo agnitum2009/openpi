@@ -86,6 +86,80 @@ function runsDir(): string {
   return path.join(getAgentDir(), "workflows");
 }
 
+/** Every persisted run id on disk; empty when no runs directory exists. */
+export function listPersistedRunIds(): string[] {
+  try {
+    return fs.readdirSync(runsDir()).filter(isWorkflowRunId);
+  } catch {
+    // No runs yet.
+  }
+  return [];
+}
+
+/** Hydrate the result/transcript side artifacts referenced by workflow.json. */
+function hydrateRunArtifacts(runId: string, details: WorkflowDetails) {
+  const runDir = path.join(runsDir(), runId);
+  if (details.resultArtifact) {
+    try {
+      details.result = JSON.parse(
+        fs.readFileSync(
+          path.join(runDir, path.basename(details.resultArtifact)),
+          "utf8",
+        ),
+      );
+    } catch {
+      // Keep the compact compatibility marker from workflow.json.
+    }
+  }
+  if (details.transcriptArtifact) {
+    try {
+      const transcripts = JSON.parse(
+        fs.readFileSync(
+          path.join(runDir, path.basename(details.transcriptArtifact)),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+      for (const agent of details.agents) {
+        agent.transcript = normalizeTranscript(
+          transcripts[String(agent.index)],
+        );
+      }
+    } catch {
+      // Older or partially written artifacts simply lack transcripts.
+    }
+  }
+}
+
+export interface ReadPersistedRunOptions {
+  /** Hydrate result and transcript side artifacts referenced by workflow.json. */
+  hydrateArtifacts?: boolean;
+}
+
+/**
+ * The single read entry for a persisted workflow.json: parse, normalize
+ * (including runs written by older tooling), and optionally hydrate the side
+ * artifacts. Unreadable or invalid runs read as undefined. Stale "running"
+ * reconciliation stays with callers so selection filters can run on the
+ * recorded timestamps first (`recoverStaleWorkflowDetails`).
+ */
+export function readPersistedWorkflowDetails(
+  runId: string,
+  options: ReadPersistedRunOptions = {},
+): WorkflowDetails | undefined {
+  let details: WorkflowDetails | undefined;
+  try {
+    const raw: unknown = JSON.parse(
+      fs.readFileSync(path.join(runsDir(), runId, "workflow.json"), "utf8"),
+    );
+    details = normalizePersistedWorkflowDetails(runId, raw);
+  } catch {
+    return undefined;
+  }
+  if (!details) return undefined;
+  if (options.hydrateArtifacts) hydrateRunArtifacts(runId, details);
+  return details;
+}
+
 function isWorktreeCleanup(
   value: unknown,
 ): value is NonNullable<AgentRecord["worktreeCleanup"]> {
@@ -395,69 +469,26 @@ export function loadRunEntries(
   /** Hide runs untouched by the current request; live runs always show. */
   startedSince = 0,
 ): RunEntry[] {
-  let names: string[] = [];
-  try {
-    names = fs.readdirSync(runsDir()).filter(isWorkflowRunId);
-  } catch {
-    // No runs yet.
-  }
   const entries: RunEntry[] = [];
-  for (const runId of names) {
+  for (const runId of listPersistedRunIds()) {
     const live = active.get(runId);
     if (live) {
       entries.push({ runId, details: live, live: true });
       continue;
     }
-    try {
-      const raw = JSON.parse(
-        fs.readFileSync(path.join(runsDir(), runId, "workflow.json"), "utf8"),
-      );
-      const details = normalizePersistedWorkflowDetails(runId, raw);
-      const touchedAt = Math.max(
-        details?.startedAt ?? 0,
-        details?.finishedAt ?? 0,
-      );
-      if (
-        details &&
-        touchedAt >= startedSince &&
-        (details.sessionId === sessionId || referencedRunIds.has(runId))
-      ) {
-        const runDir = path.join(runsDir(), runId);
-        if (details.resultArtifact) {
-          try {
-            details.result = JSON.parse(
-              fs.readFileSync(
-                path.join(runDir, path.basename(details.resultArtifact)),
-                "utf8",
-              ),
-            );
-          } catch {
-            // Keep the compact compatibility marker from workflow.json.
-          }
-        }
-        if (details.transcriptArtifact) {
-          try {
-            const transcripts = JSON.parse(
-              fs.readFileSync(
-                path.join(runDir, path.basename(details.transcriptArtifact)),
-                "utf8",
-              ),
-            ) as Record<string, unknown>;
-            for (const agent of details.agents) {
-              agent.transcript = normalizeTranscript(
-                transcripts[String(agent.index)],
-              );
-            }
-          } catch {
-            // Older or partially written artifacts simply lack transcripts.
-          }
-        }
-        recoverStaleWorkflowDetails(details);
-        entries.push({ runId, details, live: false });
-      }
-    } catch {
-      // Skip unreadable runs.
+    const details = readPersistedWorkflowDetails(runId, {
+      hydrateArtifacts: true,
+    });
+    if (!details) continue;
+    const touchedAt = Math.max(details.startedAt, details.finishedAt ?? 0);
+    if (
+      touchedAt < startedSince ||
+      (details.sessionId !== sessionId && !referencedRunIds.has(runId))
+    ) {
+      continue;
     }
+    recoverStaleWorkflowDetails(details);
+    entries.push({ runId, details, live: false });
   }
   return entries.sort((a, b) => b.details.startedAt - a.details.startedAt);
 }

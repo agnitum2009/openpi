@@ -167,7 +167,7 @@ export function buildBackgroundWorkflowFollowUp(options: {
   // Sentence lead-in matching the subagent/terminal completion messages.
   const label = options.name ? `"${options.name}"` : options.runId;
   const verb = options.status === "completed" ? "finished" : options.status;
-  return `Background workflow ${label} (${options.runId}) ${verb}.\n\n${options.result}`;
+  return `Background workflow ${label} (${options.runId}) ${verb}.\n\n${options.result}\n\n(This result is already shown to the user. Act on it and relay only the decisions or next steps — do not repeat it verbatim.)`;
 }
 
 /** Builds the background-launch result and tells the parent model how to inspect or stop the run. */

@@ -20,7 +20,7 @@ import {
 } from "../../../shared/screen-chrome.ts";
 import { sanitizeTerminalText } from "../../../shared/terminal-text.ts";
 import { formatElapsed, type SubagentSnapshot } from "../domain.ts";
-import { formatContextUtilization } from "../format.ts";
+import { formatContextUtilization } from "../../../shared/context-utilization.ts";
 import type { SubagentReadModel } from "../manager.ts";
 import {
   buildTranscriptLines,

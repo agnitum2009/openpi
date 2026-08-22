@@ -70,7 +70,11 @@ import {
   OPENPI_TOOL_SURFACE,
   patchOwnedTools,
 } from "../shared/tool-surface.ts";
-import { formatContextUtilization } from "./src/format.ts";
+import {
+  registerEditorLayer,
+  removeEditorLayer,
+} from "../shared/editor-layers.ts";
+import { formatContextUtilization } from "../shared/context-utilization.ts";
 import {
   MAX_TRACKED,
   SubagentManager,

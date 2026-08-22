@@ -10,6 +10,8 @@
  * - supports interrupt (RunSettled Interrupted -> status "error", matching v1);
  * - fails the run when the prompt starts with "FAIL:", and refuses to spawn
  *   at all when it starts with "SPAWNFAIL:" (error-path testing);
+ * - hangs the run after RunStarted without any assistant event when the
+ * prompt starts with "HANG:" (first-response watchdog testing);
  * - appends every event to a JSONL "session file" in tmpdir so the
  *   "full transcript in session file" pointers resolve.
  */
@@ -114,6 +116,11 @@ const makeStubSession = (
       Effect.gen(function* () {
         yield* emit({ _tag: "RunStarted" });
         const failing = userText.trimStart().startsWith("FAIL:");
+        // Stand in for a provider that accepts the request but never emits
+        // its first assistant event.
+        if (userText.trimStart().startsWith("HANG:")) {
+          return yield* Effect.never;
+        }
 
         const thinking = "Looking at the task and planning an approach...";
         for (const delta of chunked(thinking, 16)) {

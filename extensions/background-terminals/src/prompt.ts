@@ -178,7 +178,7 @@ export function buildTerminalResultMessage(snap: TerminalSnapshot) {
   if (snap.stderr.totalBytes > 0) {
     text += `\n\n${outputSection("stderr", snap.stderr, RESULT_STDERR_MAX, RESULT_STDERR_MAX_LINES)}`;
   }
-  return text;
+  return `${text}\n\n(This result is already shown to the user. Act on it and relay only the decisions or next steps — do not repeat it verbatim.)`;
 }
 
 /** Preserve every retained terminal identity while globally bounding batch logs. */

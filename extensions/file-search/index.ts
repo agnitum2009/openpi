@@ -3,10 +3,11 @@
  *
  * On session start the extension resolves a usable binary for each tool:
  * a normally installed system binary is preferred (silently), then an
- * existing fallback in this repo's `bin/` directory (silently), and only
- * when neither exists is an official release downloaded into `bin/` — the
- * single case that shows a UI notification. Tools await that initialization
- * before executing, and report a clear error if it failed.
+ * existing binary in the agent's managed bin directory (`~/.pi/agent/bin`,
+ * silently — e.g. cached by an earlier download), and only when neither
+ * exists is an official release downloaded into that directory — the single
+ * case that shows a UI notification. Tools await that initialization before
+ * executing, and report a clear error if it failed.
  */
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -33,7 +34,7 @@ import {
 import {
   currentTarget,
   liveBinaryEnv,
-  repositoryBinDir,
+  managedBinDir,
   resolveBinary,
   TOOL_SPECS,
   type BinaryEnv,
@@ -80,7 +81,7 @@ export function installNotifications(binaries: readonly ResolvedBinary[]) {
     .map(
       (binary) =>
         `file-search: no system ${binary.tool} found — downloaded ${binary.tool} ${binary.version ?? ""}`.trimEnd() +
-        ` to ${repositoryBinDir()}`,
+        ` to ${managedBinDir()}`,
     );
 }
 
@@ -136,7 +137,7 @@ export default function fileSearchTools(pi: ExtensionAPI) {
     }
   };
 
-  const binDir = repositoryBinDir();
+  const binDir = managedBinDir();
   const target = currentTarget();
   const initializers = makeBinaryInitializers(binDir, target, liveBinaryEnv);
 

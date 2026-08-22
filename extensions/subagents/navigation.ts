@@ -13,13 +13,9 @@ import { spinnerFrame } from "../shared/spinner.ts";
 import { sanitizeTerminalText } from "../shared/terminal-text.ts";
 import { requestWidgetRepaint } from "../shared/ui-screen.ts";
 import { formatElapsed, type SubagentSnapshot } from "./src/domain.ts";
-import {
-  failureStreakOf,
-  isStalled,
-  lastActivityOf,
-  lastIntentOf,
-} from "./src/domain.ts";
-import { contextPercent } from "./src/format.ts";
+
+import { contextPercent } from "../shared/context-utilization.ts";
+ (fix: review batch — docs intent words, subagent watchdog, bin cache, workflow reader unification (#60))
 
 export interface SubagentStripEntry {
   snapshot: SubagentSnapshot;

@@ -3,21 +3,22 @@
  *
  * Resolution order (per tool, first usable wins):
  *   1. A normally installed system binary (`fd`/`fdfind`, `rg`) — used silently.
- *   2. An existing fallback in this repository's `bin/` directory — used silently.
- *   3. A fresh download of an official release into `bin/` — the only case that
- *      should surface a UI notification.
+ *   2. An existing binary in the agent's managed bin directory
+ *      (`~/.pi/agent/bin`), cached by an earlier download — used silently.
+ *   3. A fresh download of an official release into that directory — the only
+ *      case that should surface a UI notification.
  *
  * The decision logic is an Effect over a small injectable environment
  * (`BinaryEnv`) so tests can drive it without touching the filesystem or the
  * network. `liveBinaryEnv` is the real implementation.
  */
 
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   Crypto,
@@ -64,13 +65,13 @@ const RG_SHA256: Readonly<Record<string, string>> = {
 };
 
 export type ToolName = "fd" | "rg";
-export type BinarySource = "system" | "bundled" | "installed";
+export type BinarySource = "system" | "cached" | "installed";
 
 export interface ToolSpec {
   readonly tool: ToolName;
   /** Commands probed on PATH, in order. Debian/Ubuntu install fd as `fdfind`. */
   readonly systemCommands: readonly string[];
-  /** Executable name used inside release archives and the repo bin directory. */
+  /** Executable name used inside release archives and the managed bin directory. */
   readonly binaryName: string;
 }
 
@@ -152,10 +153,9 @@ export function currentTarget(): PlatformTarget {
   return { os: process.platform, arch: process.arch };
 }
 
-/** Repository root (`~/.pi/agent`) resolved from this module's location. */
-export function repositoryBinDir() {
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-  return join(moduleDir, "..", "..", "..", "bin");
+/** Pi agent's managed binaries directory (`~/.pi/agent/bin`). */
+export function managedBinDir() {
+  return join(getAgentDir(), "bin");
 }
 
 export class UnsupportedPlatformError extends Data.TaggedError(
@@ -192,7 +192,7 @@ export interface ResolvedBinary {
   readonly version?: string;
 }
 
-/** Resolve one tool: system binary, existing bin fallback, or fresh install. */
+/** Resolve one tool: system binary, cached fallback, or fresh install. */
 export function resolveBinary(
   spec: ToolSpec,
   binDir: string,
@@ -206,9 +206,9 @@ export function resolveBinary(
       }
     }
 
-    const bundled = join(binDir, spec.binaryName);
-    if (yield* env.probe(bundled, spec.tool)) {
-      return { tool: spec.tool, command: bundled, source: "bundled" as const };
+    const cached = join(binDir, spec.binaryName);
+    if (yield* env.probe(cached, spec.tool)) {
+      return { tool: spec.tool, command: cached, source: "cached" as const };
     }
 
     const asset = releaseAsset(spec.tool, target);
@@ -218,17 +218,17 @@ export function resolveBinary(
       });
     }
 
-    yield* env.install(asset, bundled);
+    yield* env.install(asset, cached);
 
-    if (!(yield* env.probe(bundled, spec.tool))) {
+    if (!(yield* env.probe(cached, spec.tool))) {
       return yield* new InstallError({
-        message: `${spec.tool} ${asset.version} was installed to ${bundled} but failed to run.`,
+        message: `${spec.tool} ${asset.version} was installed to ${cached} but failed to run.`,
       });
     }
 
     return {
       tool: spec.tool,
-      command: bundled,
+      command: cached,
       source: "installed" as const,
       version: asset.version,
     };

@@ -69,11 +69,16 @@ pi install npm:@tt-a1i/openpi
 重启 Pi，或在当前 Session 运行 `/reload`。然后直接描述真实任务：
 
 ```text
-启动前端 dev server；并行检查 API 主链路和测试覆盖；
+在后台启动前端 dev server；用子代理并行检查 API 主链路和测试覆盖；
 结果回来后汇总风险，主会话不要原地等待。
 ```
 
 OpenPI 会把长期进程放到后台，把独立任务交给隔离 Context 的 Pi Subagent，把多阶段依赖组织成 Workflow。状态会持续显示；完整运行可从 `/ps`、`/subagents` 和 `/workflows` 检查或终止。
+
+> [!TIP]
+> Capability discovery 默认 `explicit`：明确说出能力意图才会加载对应组。
+> 例如「在后台运行 dev server」→ 后台终端；「用/使用子代理检查」→ Subagent；「用工作流编排」→ Workflow；「用 fd/rg 搜索」→ 搜索工具。
+> 关键是把意图说清楚（说「用子代理」「后台运行」这类带动作的短语），不需要记住任何工具名。
 
 > [!IMPORTANT]
 > 默认安装是安静的：不改主题、不绑定 Provider 或模型、不开启下一步预测，也不执行 post-edit 命令。Capability discovery 默认 `explicit`；只有用户通过 `/openpi-setup` 选择 `adaptive` 后，模型才会常驻看到一个小型发现网关并可自主加载额外能力。
@@ -572,4 +577,4 @@ npm 仍用于发布包的 `pack` / clean-install 验证，因为用户通过 npm
 
 `extensions/sessions/` 改编自 [jayshah5696/pi-agent-extensions](https://github.com/jayshah5696/pi-agent-extensions)。可选的顶层 Session 通信由 [pi-intercom](https://github.com/nicobailon/pi-intercom) 提供。完整第三方说明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
-本仓库目前没有项目级开源许可证；`THIRD_PARTY_NOTICES.md` 只记录第三方来源与各自许可，不等同于授予本项目使用许可。
+本项目以 MIT 许可证发布（见 [`LICENSE`](LICENSE)）；`THIRD_PARTY_NOTICES.md` 记录第三方来源与各自许可。

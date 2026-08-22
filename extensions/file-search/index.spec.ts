@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Writable } from "node:stream";
@@ -15,6 +16,7 @@ import {
 import {
   FD_INTEL_DARWIN_VERSION,
   InstallError,
+  managedBinDir,
   readBoundedResponse,
   releaseAsset,
   resolveBinary,
@@ -228,20 +230,20 @@ it.effect("binary resolution: fdfind is accepted as a system fd", () =>
   }),
 );
 
-it.effect("binary resolution: existing bin fallback is used silently", () =>
+it.effect("binary resolution: an existing cached binary is used silently", () =>
   Effect.gen(function* () {
-    const env = makeEnv({ available: ["/repo/bin/rg"] });
+    const env = makeEnv({ available: ["/cache/bin/rg"] });
     const resolved = yield* resolveBinary(
       TOOL_SPECS.rg,
-      "/repo/bin",
+      "/cache/bin",
       darwinArm,
       env,
     );
 
     assert.deepEqual(resolved, {
       tool: "rg",
-      command: "/repo/bin/rg",
-      source: "bundled",
+      command: "/cache/bin/rg",
+      source: "cached",
     });
     assert.equal(env.installs.length, 0);
   }),
@@ -316,6 +318,19 @@ it.effect("binary resolution: one failed tool does not disable the other", () =>
   }),
 );
 
+it("managed bin directory lives inside the agent directory", () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "my-pi-setup-bins-"));
+  const previous = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  try {
+    assert.equal(managedBinDir(), join(agentDir, "bin"));
+  } finally {
+    if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previous;
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
 it("release assets cover macOS and Linux on arm64 and x64 over HTTPS", () => {
   for (const os of ["darwin", "linux"] as const) {
     for (const arch of ["arm64", "x64"] as const) {
@@ -377,10 +392,10 @@ it("notifications: only fresh installs notify", () => {
     command: "fd",
     source: "system",
   };
-  const bundled: ResolvedBinary = {
+  const cached: ResolvedBinary = {
     tool: "rg",
-    command: "/repo/bin/rg",
-    source: "bundled",
+    command: "/cache/bin/rg",
+    source: "cached",
   };
   const installed: ResolvedBinary = {
     tool: "rg",
@@ -389,7 +404,7 @@ it("notifications: only fresh installs notify", () => {
     version: "15.2.0",
   };
 
-  assert.deepEqual(installNotifications([system, bundled]), []);
+  assert.deepEqual(installNotifications([system, cached]), []);
   const messages = installNotifications([system, installed]);
   assert.equal(messages.length, 1);
   assert.match(messages[0], /downloaded rg 15\.2\.0/);
