@@ -9,6 +9,7 @@ import {
   unreadActivityCounts,
   type ActivityCounts,
 } from "../shared/activity-status.ts";
+import { spinnerFrame } from "../shared/spinner.ts";
 import { sanitizeTerminalText } from "../shared/terminal-text.ts";
 import { requestWidgetRepaint } from "../shared/ui-screen.ts";
 import { formatElapsed, type SubagentSnapshot } from "./src/domain.ts";
@@ -66,9 +67,13 @@ function statusColor(status: SubagentSnapshot["status"]) {
   return "error" as const;
 }
 
-/** One status glyph per run state; doubles as the focus marker when selected. */
-function statusGlyph(snapshot: SubagentSnapshot, theme: Theme) {
-  if (snapshot.status === "running") return theme.fg("warning", "●");
+/**
+ * One status indicator per run state; doubles as the focus marker when
+ * selected. Running spins, in step with the dashboard and takeover headers.
+ */
+function statusGlyph(snapshot: SubagentSnapshot, theme: Theme, now: number) {
+  if (snapshot.status === "running")
+    return theme.fg("warning", spinnerFrame(now));
   if (snapshot.status === "done") return theme.fg("success", "✓");
   return theme.fg("error", "x");
 }
@@ -149,7 +154,7 @@ export class SubagentStripWidget {
 
     const marker = this.strip.focused
       ? this.theme.fg("accent", "❯")
-      : statusGlyph(snapshot, this.theme);
+      : statusGlyph(snapshot, this.theme, Date.now());
     const settled = counts.done + counts.failed;
     const percent = contextPercent(snapshot.usage);
     const right = renderNavigationMetrics(
