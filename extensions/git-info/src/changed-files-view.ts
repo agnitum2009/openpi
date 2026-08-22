@@ -7,6 +7,7 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { Effect } from "effect";
+import { hintLine } from "../../shared/screen-chrome.ts";
 import { sanitizeTerminalText } from "../../shared/terminal-text.ts";
 import { runCommand } from "./process.ts";
 
@@ -174,6 +175,15 @@ export async function showChangedFiles(
         return Math.max(8, Math.floor(tui.terminal.rows * 0.8) - 2);
       }
 
+      /**
+       * Rows the diff pane actually paints: one row of the frame's budget goes
+       * to the hint line below it. Scroll limits must use this and not
+       * bodyHeight(), or the last diff line can never be scrolled into view.
+       */
+      function visibleRows() {
+        return Math.max(4, bodyHeight() - 1);
+      }
+
       function ensureSelectedFileVisible() {
         const visibleFiles = Math.max(1, Math.floor(bodyHeight() / 2));
         if (selectedIndex < sidebarOffset) sidebarOffset = selectedIndex;
@@ -192,7 +202,7 @@ export async function showChangedFiles(
       function moveDiff(amount: number) {
         const maxOffset = Math.max(
           0,
-          files[selectedIndex]!.diff.length - bodyHeight(),
+          files[selectedIndex]!.diff.length - visibleRows(),
         );
         diffOffset = Math.max(0, Math.min(maxOffset, diffOffset + amount));
         tui.requestRender();
@@ -216,13 +226,18 @@ export async function showChangedFiles(
         return theme.fg("text", expanded);
       }
 
+      /**
+       * Frame edge with an optional label set into it. Muted, not accent: the
+       * frame is not the content, and the accent is spent on the focused pane
+       * seam where it actually tells you something.
+       */
       function border(width: number, label: string, top: boolean) {
         const left = top ? "┌" : "└";
         const right = top ? "┐" : "┘";
-        const text = `─ ${label} `;
+        const text = label ? `─ ${label} ` : "─";
         const remaining = Math.max(0, width - visibleWidth(text) - 2);
         return theme.fg(
-          "borderAccent",
+          "borderMuted",
           truncateToWidth(
             `${left}${text}${"─".repeat(remaining)}${right}`,
             width,
@@ -289,11 +304,11 @@ export async function showChangedFiles(
           return;
         }
         if (matchesKey(data, Key.ctrl("d"))) {
-          moveDiff(Math.max(1, Math.floor(bodyHeight() / 2)));
+          moveDiff(Math.max(1, Math.floor(visibleRows() / 2)));
           return;
         }
         if (matchesKey(data, Key.ctrl("u"))) {
-          moveDiff(-Math.max(1, Math.floor(bodyHeight() / 2)));
+          moveDiff(-Math.max(1, Math.floor(visibleRows() / 2)));
           return;
         }
         if (matchesKey(data, Key.home) || data === "g") {
@@ -304,21 +319,23 @@ export async function showChangedFiles(
         if (matchesKey(data, Key.end) || data === "G") {
           diffOffset = Math.max(
             0,
-            files[selectedIndex]!.diff.length - bodyHeight(),
+            files[selectedIndex]!.diff.length - visibleRows(),
           );
           tui.requestRender();
         }
       }
 
       function render(width: number) {
-        const height = bodyHeight();
+        const height = visibleRows();
         const sidebarWidth = Math.min(
           48,
           Math.max(24, Math.floor(width * 0.34)),
         );
         const diffWidth = Math.max(1, width - sidebarWidth - 3);
         const selectedFile = files[selectedIndex]!;
-        const title = `local changes · ${files.length} ${files.length === 1 ? "file" : "files"} · ${focus === "files" ? "FILES" : "DIFF"}`;
+        // No shouted FILES/DIFF badge: the accent-lit pane seam already says
+        // where the keyboard is, without a second thing to read.
+        const title = `local changes · ${files.length} ${files.length === 1 ? "file" : "files"}`;
         const lines = [border(width, title, true)];
 
         for (let row = 0; row < height; row += 1) {
@@ -329,7 +346,7 @@ export async function showChangedFiles(
           if (file) {
             const isSelected = fileIndex === selectedIndex;
             if (row % 2 === 0) {
-              const marker = isSelected ? "› " : "  ";
+              const marker = isSelected ? "❯ " : "  ";
               const isBinary =
                 file.additions === null || file.deletions === null;
               const stats = isBinary
@@ -386,11 +403,27 @@ export async function showChangedFiles(
           );
         }
 
-        const help =
-          focus === "files"
-            ? "j/k or ↑/↓ select · enter/space/l open diff · esc close"
-            : "j/k or ↑/↓ scroll · ctrl-d/u page · g/G top/bottom · esc/h files";
-        lines.push(border(width, help, false));
+        lines.push(border(width, "", false));
+        // Hints below the frame rather than crammed into its bottom edge, with
+        // keys a step brighter than the words describing them.
+        lines.push(
+          hintLine(
+            theme,
+            focus === "files"
+              ? [
+                  ["j/k or ↑/↓", "select"],
+                  ["enter/space/l", "open diff"],
+                  ["esc", "close"],
+                ]
+              : [
+                  ["j/k or ↑/↓", "scroll"],
+                  ["ctrl-d/u", "page"],
+                  ["g/G", "top/bottom"],
+                  ["esc/h", "files"],
+                ],
+            width,
+          ),
+        );
         return lines;
       }
 

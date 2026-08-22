@@ -5,22 +5,24 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
   DynamicBorder,
-  SessionManager,
   keyHint,
+  SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import {
   CancellableLoader,
   Container,
   Key,
-  SelectList,
+  matchesKey,
   type SelectItem,
+  SelectList,
   Spacer,
   Text,
-  matchesKey,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { hintLine } from "../shared/screen-chrome.ts";
+import { createSessionStatsLoader, type SessionStats } from "./git-stats.js";
 import {
   buildPreviewError,
   buildSessionDescription,
@@ -28,14 +30,13 @@ import {
   buildSessionPreview,
   buildSessionSearchEntries,
   filterSessionEntries,
+  formatRelativeTime,
   getSessionPaneLayout,
-  parseLimit,
   type PreviewBlock,
+  parseLimit,
   type SessionInfoLike,
   type SessionPreview,
-  formatRelativeTime,
 } from "./sessions.js";
-import { createSessionStatsLoader, type SessionStats } from "./git-stats.js";
 
 const DEFAULT_VISIBLE = 12;
 const SNIPPET_MAX = 60;
@@ -82,7 +83,7 @@ const themeText = (
 ): string => {
   if (kind === "title") return theme.fg("accent", theme.bold(text));
   if (kind === "subtitle") return theme.fg("dim", text);
-  if (kind === "rule") return theme.fg("border", text);
+  if (kind === "rule") return theme.fg("borderMuted", text);
   if (kind === "user") return theme.fg("accent", theme.bold(text));
   if (kind === "assistant") return theme.fg("warning", theme.bold(text));
   if (kind === "tool") return theme.fg("muted", theme.bold(text));
@@ -357,31 +358,20 @@ const renderPreview = (
 ): { lines: string[]; totalLines: number; maxScroll: number } => {
   const raw: string[] = [];
 
+  // Left-aligned, like every other OpenPI heading: centred titles read as a
+  // different application than the panel they sit inside, and they wander as
+  // the pane resizes.
   if (!preview) {
-    raw.push(
-      " ".repeat(Math.max(0, Math.floor((width - 7) / 2))) +
-        themeText(theme, "title", "Preview"),
-    );
-    raw.push(
-      " ".repeat(Math.max(0, Math.floor((width - 25) / 2))) +
-        themeText(theme, "subtitle", "Loading selected session…"),
-    );
+    raw.push(themeText(theme, "title", "Preview"));
+    raw.push(themeText(theme, "subtitle", "Loading selected session…"));
   } else {
-    const titleStr = "Thread Preview";
-    const titleColor =
+    const titleStr = "Thread preview";
+    raw.push(
       focus === "preview"
         ? themeText(theme, "title", titleStr)
-        : themeText(theme, "subtitle", titleStr);
-    const titlePadding = " ".repeat(
-      Math.max(0, Math.floor((width - titleStr.length) / 2)),
+        : themeText(theme, "subtitle", titleStr),
     );
-    raw.push(`${titlePadding}${titleColor}`);
-
-    const subStr = preview.subtitle;
-    const subPadding = " ".repeat(
-      Math.max(0, Math.floor((width - visibleWidth(subStr)) / 2)),
-    );
-    raw.push(`${subPadding}${themeText(theme, "subtitle", subStr)}`);
+    raw.push(themeText(theme, "subtitle", preview.subtitle));
 
     raw.push(themeText(theme, "rule", "─".repeat(Math.max(0, width))));
 
@@ -438,10 +428,10 @@ const renderPreview = (
       if (i >= thumbStart && i < thumbStart + thumbSize) {
         scrollChar = theme.fg("text", "█");
       } else {
-        scrollChar = theme.fg("border", "│");
+        scrollChar = theme.fg("borderMuted", "│");
       }
     } else {
-      scrollChar = theme.fg("border", "│");
+      scrollChar = theme.fg("borderMuted", "│");
     }
 
     visible.push(padAnsiRight(line, width - 1) + scrollChar);
@@ -474,7 +464,9 @@ async function listSessions(
   const sessions = await ctx.ui.custom<SessionInfoLike[] | null>(
     (tui, theme, _kb, done) => {
       const container = new Container();
-      const borderColor = (text: string) => theme.fg("border", text);
+      // Same tone as the split-pane frame and every other OpenPI panel; this
+      // was the last `border` call left in the package.
+      const borderColor = (text: string) => theme.fg("borderMuted", text);
 
       const loader = new CancellableLoader(
         tui,
@@ -732,7 +724,7 @@ async function showSessionPicker(
         if (isLoading) {
           container.addChild(new Spacer(1));
           container.addChild(
-            new Text(theme.fg("muted", "  Loading sessions..."), 1, 0),
+            new Text(theme.fg("muted", "  Loading sessions…"), 1, 0),
           );
           container.addChild(new Spacer(1));
         } else {
@@ -762,7 +754,15 @@ async function showSessionPicker(
         }
         container.addChild(
           new Text(
-            theme.fg("dim", "↑↓ navigate • enter open • esc cancel"),
+            hintLine(
+              theme,
+              [
+                ["↑↓", "navigate"],
+                ["enter", "open"],
+                ["esc", "cancel"],
+              ],
+              Math.max(1, width - 2),
+            ),
             1,
             0,
           ),
@@ -777,29 +777,29 @@ async function showSessionPicker(
         listWidth: number,
         previewWidth: number,
       ): string => {
-        const leftTitle = " Switch Thread ";
+        const leftTitle = " sessions ";
+        const rightTitle = " preview ";
         const left = `┌─${leftTitle}${"─".repeat(Math.max(0, listWidth - leftTitle.length - 2))}`;
-        const right = "─".repeat(Math.max(0, previewWidth - 1)) + "┐";
-        return `${theme.fg("border", left)}${theme.fg("border", "─┬─")}${theme.fg("border", right)}`;
+        const right =
+          `─${rightTitle}${"─".repeat(Math.max(0, previewWidth - rightTitle.length - 2))}` +
+          "┐";
+        return `${theme.fg("borderMuted", left)}${theme.fg("borderMuted", "─┬─")}${theme.fg("borderMuted", right)}`;
       };
 
       const buildBottomBorder = (
         listWidth: number,
         previewWidth: number,
-        previewStats: string,
       ): string => {
-        const help = showAllWorkspaces
-          ? " Opt+W/Ctrl+T current workspace  ·  Esc close "
-          : " Opt+W/Ctrl+T all workspaces  ·  Esc close ";
         const left = `└${"─".repeat(Math.max(0, listWidth - 1))}`;
-        const right = `${"─".repeat(Math.max(0, previewWidth - help.length - 1))}${help}┘`;
-        return `${theme.fg("border", left)}${theme.fg("border", "─┴─")}${theme.fg("border", right)}`;
+        const right = `${"─".repeat(Math.max(0, previewWidth - 1))}┘`;
+        return `${theme.fg("borderMuted", left)}${theme.fg("borderMuted", "─┴─")}${theme.fg("borderMuted", right)}`;
       };
 
       const renderSplitPane = (width: number): string[] => {
         const layout = getSessionPaneLayout(width);
         const termRows = Math.max(12, tui.terminal?.rows ?? 24);
-        const contentHeight = Math.max(8, termRows - 2);
+        // Frame (2) + hint line (1).
+        const contentHeight = Math.max(8, termRows - 3);
         const filterLine = filter.length
           ? `${theme.fg("muted", "Filter: ")}${theme.fg("text", filter)}`
           : `${theme.fg("muted", "Filter: ")}${theme.fg("dim", "type to filter")}`;
@@ -861,26 +861,41 @@ async function showSessionPicker(
           previewScrollOffset,
           renderedPreview.maxScroll,
         );
-        const modeHints = `t ${toolsExpanded ? "compact" : "tools"} • h ${thinkingVisible ? "hide thinking" : "thinking"}`;
-        const previewStats =
-          renderedPreview.maxScroll > 0
-            ? ` ${previewScrollOffset + 1}-${Math.min(previewScrollOffset + contentHeight, renderedPreview.totalLines)}/${renderedPreview.totalLines} • pgup/pgdn • ${modeHints} `
-            : ` esc/enter • ${modeHints} `;
+        // Hints live on their own line under the frame instead of being packed
+        // into the bottom border, where they had to compete with the border for
+        // the same row and lost the keys in a wall of dim text.
+        const hints = hintLine(
+          theme,
+          [
+            renderedPreview.maxScroll > 0
+              ? ([
+                  "",
+                  `${previewScrollOffset + 1}-${Math.min(previewScrollOffset + contentHeight, renderedPreview.totalLines)}/${renderedPreview.totalLines}`,
+                ] as const)
+              : undefined,
+            renderedPreview.maxScroll > 0
+              ? (["pgup/pgdn", "scroll"] as const)
+              : undefined,
+            ["t", toolsExpanded ? "compact" : "tools"],
+            ["h", thinkingVisible ? "hide thinking" : "thinking"],
+            [
+              "opt+w/ctrl+t",
+              showAllWorkspaces ? "current workspace" : "all workspaces",
+            ],
+            ["esc", "close"],
+          ],
+          width,
+        );
 
         const lines = [buildTopBorder(layout.listWidth, layout.previewWidth)];
         for (let i = 0; i < contentHeight; i++) {
           const left = padAnsiRight(leftLines[i] ?? "", layout.listWidth);
           const right =
             renderedPreview.lines[i] ?? " ".repeat(layout.previewWidth);
-          lines.push(`${left}${theme.fg("border", " │ ")}${right}`);
+          lines.push(`${left}${theme.fg("borderMuted", " │ ")}${right}`);
         }
-        lines.push(
-          buildBottomBorder(
-            layout.listWidth,
-            layout.previewWidth,
-            previewStats,
-          ),
-        );
+        lines.push(buildBottomBorder(layout.listWidth, layout.previewWidth));
+        lines.push(hints);
         return lines.map((line) => truncateToWidth(line, width, "", true));
       };
 

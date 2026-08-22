@@ -15,36 +15,37 @@ import type {
 import {
   Editor,
   type EditorTheme,
+  type Focusable,
   Key,
   matchesKey,
   Text,
   truncateToWidth,
-  type Focusable,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { Cause, Effect, Exit } from "effect";
-import { Type, type Static } from "typebox";
-import { sanitizeTerminalText } from "../shared/terminal-text.ts";
+import { type Static, Type } from "typebox";
 import {
   PLAN_MODE_CHANNEL,
   type PlanModeState,
 } from "../shared/plan-mode-state.ts";
+import { hintLine } from "../shared/screen-chrome.ts";
 import {
   OPENPI_SETUP_EPISODE_CHANNEL,
   type OpenPiSetupEpisodeState,
 } from "../shared/setup-episode-state.ts";
+import { sanitizeTerminalText } from "../shared/terminal-text.ts";
 import {
   OPENPI_TOOL_SURFACE,
   patchOwnedTools,
 } from "../shared/tool-surface.ts";
 import { createHumanHandoffToolDefinition } from "./handoff.ts";
 import {
-  BRACKETED_PASTE_END,
-  BRACKETED_PASTE_START,
-  MAX_ANSWER_DRAFT_UTF8_BYTES,
   answerDraftByteLength,
   answerDraftFits,
+  BRACKETED_PASTE_END,
+  BRACKETED_PASTE_START,
   longerThanAnswerDraftLimit,
+  MAX_ANSWER_DRAFT_UTF8_BYTES,
   prospectiveAnswerDraftFits,
   sanitizeAnswerDraftEditorInput,
 } from "./limits.ts";
@@ -63,7 +64,7 @@ const MAX_OPTIONS = 5;
 /** Preview lines rendered before the tail is summarized. */
 const PREVIEW_MAX_LINES = 20;
 
-export { MAX_ANSWER_DRAFT_UTF8_BYTES, answerDraftFits } from "./limits.ts";
+export { answerDraftFits, MAX_ANSWER_DRAFT_UTF8_BYTES } from "./limits.ts";
 
 const OptionSchema = Type.Object({
   label: Type.String({
@@ -949,9 +950,15 @@ export default function askUser(pi: ExtensionAPI) {
               );
               lines.push("");
               add(
-                theme.fg(
-                  "dim",
-                  ` ↑↓ choose • 1-${params.questions.length} edit answer • Enter open/submit • Esc dismiss`,
+                hintLine(
+                  theme,
+                  [
+                    ["↑↓", "choose"],
+                    [`1-${params.questions.length}`, "edit answer"],
+                    ["enter", "open/submit"],
+                    ["esc", "dismiss"],
+                  ],
+                  width,
                 ),
               );
               add(theme.fg("accent", "─".repeat(width)));
@@ -1043,11 +1050,20 @@ export default function askUser(pi: ExtensionAPI) {
 
             lines.push("");
             add(
-              theme.fg(
-                "dim",
+              hintLine(
+                theme,
                 editMode
-                  ? " Enter save answer • Esc keep draft and return"
-                  : ` ↑↓ or 1-${currentOptions.length} select • Tab add notes • Enter save draft answer • Esc dismiss`,
+                  ? [
+                      ["enter", "save answer"],
+                      ["esc", "keep draft and return"],
+                    ]
+                  : [
+                      [`↑↓ or 1-${currentOptions.length}`, "select"],
+                      ["tab", "add notes"],
+                      ["enter", "save draft answer"],
+                      ["esc", "dismiss"],
+                    ],
+                width,
               ),
             );
             add(theme.fg("accent", "─".repeat(width)));

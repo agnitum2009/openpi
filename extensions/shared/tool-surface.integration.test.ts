@@ -270,7 +270,7 @@ test("real Pi session starts with the compact OpenPI parent surface", async () =
   );
 });
 
-test("real Pi session rebuilds tools and prompt after a capability and owner state activate its family", async () => {
+test("real Pi session exposes one stable subagent family when delegate loads", async () => {
   let controller: Parameters<ExtensionFactory>[0] | undefined;
   const controllerFactory: ExtensionFactory = (pi) => {
     controller = pi;
@@ -288,9 +288,8 @@ test("real Pi session rebuilds tools and prompt after a capability and owner sta
         "write",
       ]);
       patchOwnedTools(controller, "subagents", {
-        disable: OPENPI_TOOL_SURFACE.subagents.deferred,
+        enable: OPENPI_TOOL_SURFACE.subagents.entry,
       });
-
       const gateway = session.getToolDefinition("openpi_load_tools");
       assert.ok(gateway);
       await gateway.execute(
@@ -305,11 +304,12 @@ test("real Pi session rebuilds tools and prompt after a capability and owner sta
         "bash",
         "edit",
         "write",
-        "subagent_spawn",
+        ...OPENPI_TOOL_SURFACE.subagents.entry,
       ]);
+      const loadedPrompt = session.systemPrompt;
 
       patchOwnedTools(controller, "subagents", {
-        enable: OPENPI_TOOL_SURFACE.subagents.deferred,
+        enable: OPENPI_TOOL_SURFACE.subagents.entry,
       });
 
       assert.deepEqual(session.getActiveToolNames(), [
@@ -317,10 +317,10 @@ test("real Pi session rebuilds tools and prompt after a capability and owner sta
         "bash",
         "edit",
         "write",
-        "subagent_spawn",
-        ...OPENPI_TOOL_SURFACE.subagents.deferred,
+        ...OPENPI_TOOL_SURFACE.subagents.entry,
       ]);
       assert.notEqual(session.systemPrompt, beforePrompt);
+      assert.equal(session.systemPrompt, loadedPrompt);
     },
     [SUBAGENTS_EXTENSION],
   );

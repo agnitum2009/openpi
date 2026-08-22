@@ -338,13 +338,12 @@ export default function (pi: ExtensionAPI) {
   const resultDelivery =
     createDeferredResultDelivery<SubagentSnapshot>(MAX_TRACKED);
   const dispatchResults = createSubagentResultDispatcher(pi);
-  const hideLifecycleTools = () =>
+  // #48 wake semantics absorbed locally: agent_settled flushes with wake=true
+  // (see flushResults), so the upstream createSubagentResultDelivery/parentSettled
+  // block does not apply — the deferred map + batcher covers both wake edges.
+  const registerStableToolFamily = () =>
     patchOwnedTools(pi, "subagents", {
-      disable: OPENPI_TOOL_SURFACE.subagents.deferred,
-    });
-  const showLifecycleTools = () =>
-    patchOwnedTools(pi, "subagents", {
-      enable: OPENPI_TOOL_SURFACE.subagents.deferred,
+      enable: OPENPI_TOOL_SURFACE.subagents.entry,
     });
 
   const getRuntime = () => (runtime ??= createSubagentRuntime());
@@ -540,7 +539,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", (_event, ctx) => {
     refreshAgentTypes(ctx.cwd, ctx.isProjectTrusted());
-    hideLifecycleTools();
+    registerStableToolFamily();
     sessionContext = ctx;
     settledAcknowledgedAt = 0;
     if (ctx.hasUI) ui = ctx.ui;
@@ -824,8 +823,6 @@ export default function (pi: ExtensionAPI) {
         if (worktree) await reclaimWorktree(cwd, worktree).catch(() => {});
         throw error;
       }
-
-      showLifecycleTools();
 
       return {
         content: [

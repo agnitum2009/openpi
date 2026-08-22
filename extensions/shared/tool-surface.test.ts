@@ -56,6 +56,8 @@ test("owner patch starts from the latest tool list and preserves foreign tools",
     "read",
     "third_party_tool",
     "subagent_spawn",
+    "subagent_cancel",
+    "subagent_send",
     "subagent_check",
     "subagent_list",
   ]);
@@ -69,6 +71,8 @@ test("owner patch starts from the latest tool list and preserves foreign tools",
     "read",
     "third_party_tool",
     "subagent_spawn",
+    "subagent_cancel",
+    "subagent_send",
     "subagent_check",
     "subagent_list",
     "late_third_party_tool",
@@ -149,14 +153,17 @@ test("an explicitly bound inline owner controls only its declared source", () =>
 });
 
 test("owner patch is a no-op when the desired surface is already active", () => {
-  const h = harness(["read", "openpi_load_tools", "subagent_spawn"]);
+  const h = harness([
+    "read",
+    "openpi_load_tools",
+    ...OPENPI_TOOL_SURFACE.subagents.entry,
+  ]);
   resetOpenPiToolSurface(h.pi);
   loadOpenPiCapabilities(h.pi, ["delegate"]);
   h.writes.length = 0;
   assert.equal(
     patchOwnedTools(h.pi, "subagents", {
-      enable: ["subagent_spawn"],
-      disable: ["subagent_wait"],
+      enable: OPENPI_TOOL_SURFACE.subagents.entry,
     }),
     false,
   );
@@ -176,13 +183,15 @@ test("catalog defines the compact parent entry surface and every managed name on
     OPENPI_TOOL_SURFACE_NAMES.length,
     new Set(OPENPI_TOOL_SURFACE_NAMES).size,
   );
-  assert.deepEqual(OPENPI_TOOL_SURFACE.subagents.deferred, [
+  assert.deepEqual(OPENPI_TOOL_SURFACE.subagents.entry, [
+    "subagent_spawn",
     "subagent_wait",
     "subagent_cancel",
     "subagent_send",
     "subagent_check",
     "subagent_list",
   ]);
+  assert.deepEqual(OPENPI_TOOL_SURFACE.subagents.deferred, []);
 });
 
 test("an unloaded capability remembers lifecycle state without exposing its tools", () => {

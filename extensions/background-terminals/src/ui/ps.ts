@@ -16,6 +16,12 @@ import { formatSize } from "@earendil-works/pi-coding-agent";
 import type { Component, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
+  hintLine,
+  overflowNote,
+  panelFrame,
+  screenTitleLine,
+} from "../../../shared/screen-chrome.ts";
+import {
   formatDuration,
   formatElapsed,
   formatExit,
@@ -217,24 +223,6 @@ class TerminalDashboard implements Component {
     }
   }
 
-  private pad(text: string, width: number): string {
-    const truncated = truncateToWidth(text, width);
-    return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
-  }
-
-  private borderSegment(width: number, title: string): string {
-    const theme = this.theme;
-    const label = title
-      ? ` ${truncateToWidth(title, Math.max(0, width - 3))} `
-      : "";
-    const labelWidth = visibleWidth(label);
-    return (
-      theme.fg("border", "─") +
-      (label ? theme.fg("text", label) : "") +
-      theme.fg("border", "─".repeat(Math.max(0, width - 1 - labelWidth)))
-    );
-  }
-
   render(width: number): string[] {
     const theme = this.theme;
     const terminals = this.terminals();
@@ -245,64 +233,34 @@ class TerminalDashboard implements Component {
     // chat, editor, and extra footer lines while leaving pi's final footer
     // row visible.
     const bodyHeight = Math.max(6, rows - 5);
-    const innerWidth = width - 2;
-
-    const lines: string[] = [];
-
-    // Header: title left, count right
-    const headerLeft = theme.fg("accent", theme.bold("Background terminals"));
-    const headerRight = theme.fg(
-      "muted",
-      `${terminals.length} terminal${terminals.length === 1 ? "" : "s"}`,
-    );
-    const headerPad = Math.max(
-      1,
-      width - visibleWidth(headerLeft) - visibleWidth(headerRight) - 4,
-    );
-    lines.push(
-      truncateToWidth(
-        `  ${headerLeft}${" ".repeat(headerPad)}${headerRight}  `,
-        width,
-      ),
-    );
-
-    // Top border with panel title
     const running = terminals.filter((s) => s.status === "running").length;
-    lines.push(
-      theme.fg("border", "╭") +
-        this.borderSegment(
-          innerWidth,
-          `terminals · ${running} running / ${terminals.length}`,
-        ) +
-        theme.fg("border", "╮"),
-    );
+    const keys = (binding: Parameters<KeybindingsManager["getKeys"]>[0]) =>
+      configuredKeys(this.keybindings, binding);
 
-    // Rows
-    const divider = theme.fg("border", "│");
-    const rowLines = this.renderRows(terminals, innerWidth, bodyHeight);
-    for (let i = 0; i < bodyHeight; i++) {
-      lines.push(divider + this.pad(rowLines[i] ?? "", innerWidth) + divider);
-    }
-
-    // Bottom border
-    lines.push(
-      theme.fg("border", "╰") +
-        theme.fg("border", "─".repeat(Math.max(0, innerWidth))) +
-        theme.fg("border", "╯"),
-    );
-
-    // Hints
-    lines.push(
-      truncateToWidth(
-        theme.fg(
-          "dim",
-          `  ${configuredKeys(this.keybindings, "tui.select.up")}/${configuredKeys(this.keybindings, "tui.select.down")}/jk select · ${configuredKeys(this.keybindings, "tui.select.confirm")} inspect · x kill · ${configuredKeys(this.keybindings, "tui.select.cancel")} close`,
-        ),
+    return [
+      screenTitleLine(
+        theme,
+        "Background terminals",
+        `${terminals.length} terminal${terminals.length === 1 ? "" : "s"}`,
         width,
       ),
-    );
-
-    return lines;
+      ...panelFrame(theme, {
+        label: `terminals · ${running}/${terminals.length} running`,
+        rows: this.renderRows(terminals, width - 2, bodyHeight),
+        width,
+        height: bodyHeight + 2,
+      }),
+      hintLine(
+        theme,
+        [
+          [`${keys("tui.select.up")}/${keys("tui.select.down")}/jk`, "select"],
+          [keys("tui.select.confirm"), "inspect"],
+          ["x", "kill"],
+          [keys("tui.select.cancel"), "close"],
+        ],
+        width,
+      ),
+    ];
   }
 
   private renderRows(
@@ -359,13 +317,13 @@ class TerminalDashboard implements Component {
       out.push(truncateToWidth(leftTruncated + " ".repeat(gap) + right, width));
     }
 
-    if (start > 0) {
-      out[0] = truncateToWidth(theme.fg("dim", `   ... ${start} more`), width);
-    }
+    if (start > 0) out[0] = overflowNote(theme, start, width, "above");
     if (start + height < terminals.length) {
-      out[out.length - 1] = truncateToWidth(
-        theme.fg("dim", `   ... ${terminals.length - start - height} more`),
+      out[out.length - 1] = overflowNote(
+        theme,
+        terminals.length - start - height,
         width,
+        "below",
       );
     }
     return out;
@@ -514,35 +472,43 @@ class TerminalDetailView implements Component {
 
   render(width: number): string[] {
     const theme = this.theme;
-    const border = theme.fg("borderAccent", "─".repeat(Math.max(1, width)));
+    // One accent rule opens and closes the overlay; interior seams stay quiet
+    // so the output, not the frame, is what the eye lands on.
+    const edge = theme.fg("borderAccent", "─".repeat(Math.max(1, width)));
+    const seam = theme.fg("borderMuted", "─".repeat(Math.max(1, width)));
     const lines: string[] = [];
     const snap = this.snap();
 
     if (!snap) {
-      lines.push(border);
+      lines.push(edge);
       lines.push(theme.fg("dim", `${this.id} is no longer tracked`));
-      lines.push(border);
+      lines.push(edge);
       return lines;
     }
 
-    lines.push(border);
-    const header =
+    lines.push(edge);
+    const dot = theme.fg("dim", " · ");
+    const header = [
       `${statusGlyph(snap, theme)} ` +
-      theme.fg("accent", theme.bold(`${snap.id} · ${oneLine(snap.title)}`)) +
-      theme.fg(
-        "muted",
-        ` · ${snap.status} · ${formatElapsed(snap)} · pid ${snap.pid ?? "?"}`,
-      ) +
-      (snap.status !== "running"
-        ? theme.fg("muted", ` · ${formatExit(snap)}`)
-        : "") +
-      (snap.status === "running" && snap.timeoutAt !== undefined
-        ? theme.fg(
-            "warning",
-            ` · ${formatDuration((snap.timeoutAt - Date.now()) / 1_000)} remaining`,
-          )
-        : "") +
-      theme.fg("dim", ` · ${snap.cwd}`);
+        theme.fg("accent", theme.bold(`${snap.id} · ${oneLine(snap.title)}`)),
+      statusWord(snap, theme),
+      theme.fg("muted", formatElapsed(snap)),
+      theme.fg("muted", `pid ${snap.pid ?? "?"}`),
+      ...(snap.status !== "running"
+        ? [theme.fg("muted", formatExit(snap))]
+        : []),
+      ...(snap.status === "running" && snap.timeoutAt !== undefined
+        ? [
+            theme.fg(
+              "warning",
+              `${formatDuration((snap.timeoutAt - Date.now()) / 1_000)} left`,
+            ),
+          ]
+        : []),
+      theme.fg("dim", snap.cwd),
+    ]
+      .filter(Boolean)
+      .join(dot);
     lines.push(truncateToWidth(header, width));
     lines.push(
       truncateToWidth(
@@ -550,7 +516,7 @@ class TerminalDetailView implements Component {
         width,
       ),
     );
-    lines.push(border);
+    lines.push(seam);
 
     // Stream tab line: which stream is active, both sizes.
     const active = this.stream;
@@ -561,7 +527,7 @@ class TerminalDetailView implements Component {
         : theme.fg("dim", `${name} (${formatSize(size)})`);
     lines.push(
       truncateToWidth(
-        `  ${tab("stdout", snap.stdout.totalBytes)}${theme.fg("dim", " | ")}${tab("stderr", snap.stderr.totalBytes)}${theme.fg("dim", "  — t to switch")}`,
+        ` ${tab("stdout", snap.stdout.totalBytes)}${theme.fg("dim", " · ")}${tab("stderr", snap.stderr.totalBytes)}${theme.fg("dim", "   t")} ${theme.fg("dim", "switch")}`,
         width,
       ),
     );
@@ -616,7 +582,7 @@ class TerminalDetailView implements Component {
     if (this.scrollOffset > 0) {
       body.push(
         truncateToWidth(
-          theme.fg("dim", `... ${this.scrollOffset} lines below · ↓/pgdn`),
+          theme.fg("dim", `… ${this.scrollOffset} lines below · ↓/pgdn`),
           width,
         ),
       );
@@ -624,17 +590,30 @@ class TerminalDetailView implements Component {
     while (body.length < viewport) body.push("");
     lines.push(...body.slice(0, viewport));
 
-    lines.push(border);
+    lines.push(seam);
+    const keys = (binding: Parameters<KeybindingsManager["getKeys"]>[0]) =>
+      configuredKeys(this.keybindings, binding);
     lines.push(
-      truncateToWidth(
-        theme.fg(
-          "dim",
-          `${configuredKeys(this.keybindings, "tui.select.cancel")} back · t stdout/stderr · x kill · ${configuredKeys(this.keybindings, "tui.editor.cursorUp")}/${configuredKeys(this.keybindings, "tui.editor.cursorDown")}/jk scroll · ${configuredKeys(this.keybindings, "tui.editor.pageUp")}/${configuredKeys(this.keybindings, "tui.editor.pageDown")} page · g/G top/bottom`,
-        ),
+      hintLine(
+        theme,
+        [
+          [keys("tui.select.cancel"), "back"],
+          ["t", "stdout/stderr"],
+          ["x", "kill"],
+          [
+            `${keys("tui.editor.cursorUp")}/${keys("tui.editor.cursorDown")}/jk`,
+            "scroll",
+          ],
+          [
+            `${keys("tui.editor.pageUp")}/${keys("tui.editor.pageDown")}`,
+            "page",
+          ],
+          ["g/G", "top/bottom"],
+        ],
         width,
       ),
     );
-    lines.push(border);
+    lines.push(edge);
     return lines;
   }
 

@@ -70,7 +70,7 @@ test("persistent task widget matches a compact Claude-style task panel", () => {
   // hides the dropped one, so including it would not add up against the rows.
   assert.match(
     lines[0]!,
-    /◆ Tasks\s+3 tasks \(1 done, 1 in progress, 1 open\)/,
+    /◆ Tasks\s+3 tasks · 1 done · 1 in progress · 1 open/,
   );
   assert.match(lines[0]!, /\/tasks/);
   assert.doesNotMatch(lines[0]!, /ctrl\+shift\+t/);
@@ -95,6 +95,8 @@ test("persistent task widget matches a compact Claude-style task panel", () => {
     18,
   );
   assert.ok(narrow.every((line) => visibleWidth(line) <= 18));
+  // Right-edge hints are dropped, not truncated, when the census needs the room.
+  assert.doesNotMatch(narrow[0]!, /\/tas/);
   assert.deepEqual(
     renderTaskWidget(
       {
@@ -253,10 +255,7 @@ test("collapsed tool results remain bounded", () => {
   assert.match(output, /… 3 more/);
   // The census header replaces the old "N total · revision N" footer: it says
   // more, and it says it before the rows rather than after them.
-  assert.match(
-    output.split("\n")[0]!,
-    /8 tasks \(0 done, 0 in progress, 8 open\)/,
-  );
+  assert.match(output.split("\n")[0]!, /8 tasks · all open/);
 });
 
 test("a record without counts shows no census rather than a wrong one", () => {
@@ -354,12 +353,12 @@ test("settled subjects are struck through, live ones are not", () => {
   }
 });
 
-test("the census line always shows the same three states, plus exceptions", () => {
+test("the census line names only the states that are actually occupied", () => {
   const summary = (items: Parameters<typeof taskCounts>[0]) =>
     renderTaskSummary(taskCounts(items), theme);
 
-  // done/in progress/open are listed even at zero, so the line keeps a stable
-  // shape as work moves between them instead of reflowing on every update.
+  // Zero-count states are dropped: a segment costs a slot to say nothing, and
+  // one appearing when work starts is a signal rather than a glitch.
   assert.equal(
     summary([
       { id: 1, subject: "a", status: "done", note: "ok" },
@@ -367,21 +366,24 @@ test("the census line always shows the same three states, plus exceptions", () =
       { id: 3, subject: "c", status: "done", note: "ok" },
       { id: 4, subject: "d", status: "in_progress" },
     ]),
-    "4 tasks (3 done, 1 in progress, 0 open)",
+    "4 tasks · 3 done · 1 in progress",
   );
 
-  // blocked and dropped are exceptional; they earn a slot only when non-zero.
-  // Order runs by how far along the work is, so blocked sits ahead of open.
+  // A single status covering the whole batch collapses to "all", so the count
+  // is not repeated on both sides of the separator.
   assert.equal(
     summary([{ id: 1, subject: "a", status: "pending" }]),
-    "1 task (0 done, 0 in progress, 1 open)",
+    "1 task · all open",
   );
+  assert.equal(summary([]), "no tasks");
+
+  // Order runs by how far along the work is, so blocked sits ahead of open.
   assert.equal(
     summary([
       { id: 1, subject: "a", status: "blocked", note: "waiting" },
       { id: 2, subject: "b", status: "dropped", note: "cut" },
     ]),
-    "2 tasks (0 done, 0 in progress, 1 blocked, 0 open, 1 dropped)",
+    "2 tasks · 1 blocked · 1 dropped",
   );
 });
 
@@ -408,7 +410,7 @@ test("the tool result header counts the batch, not the rows it happens to show",
   );
   assert.match(
     component.render(100).join("\n").split("\n")[0]!,
-    /4 tasks \(3 done, 1 in progress, 0 open\)/,
+    /4 tasks · 3 done · 1 in progress/,
   );
 });
 

@@ -2,6 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 import {
   fitNavigationSides,
+  renderNavigationMetrics,
   type BelowEditorStripState,
 } from "../shared/below-editor-navigation.ts";
 import {
@@ -146,19 +147,22 @@ export class SubagentStripWidget {
       ? this.theme.fg("accent", "❯")
       : this.theme.fg("dim", "○");
     const settled = counts.done + counts.failed;
-    const metrics = [
-      running.length > 0 ? `${running.length} running` : undefined,
-      counts.done > 0 ? `${counts.done} done` : undefined,
-      counts.failed > 0 ? `${counts.failed} failed` : undefined,
-      formatElapsed(snapshot),
-      formatContextUtilization(snapshot.usage),
+    const total = counts.running + settled;
+    const right = renderNavigationMetrics(
+      this.theme,
+      [
+        running.length > 0 ? `${running.length} running` : undefined,
+        counts.done > 0 ? `${counts.done} done` : undefined,
+        counts.failed > 0 ? `${counts.failed} failed` : undefined,
+        formatElapsed(snapshot),
+        formatContextUtilization(snapshot.usage),
+      ],
       this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
-    ]
-      .filter((part): part is string => Boolean(part))
-      .join(" · ");
+      snapshot.status === "running" ? undefined : statusColor(snapshot.status),
+    );
     const header = fitNavigationSides(
       ` ${marker} ${this.theme.fg("text", this.theme.bold("Subagents"))}`,
-      this.theme.fg(statusColor(snapshot.status), metrics),
+      right,
       width,
     );
     lines.push(header);
@@ -225,5 +229,19 @@ export class SubagentStripWidget {
       );
     }
     return lines;
+=======
+    const total = counts.running + settled;
+    const right = renderNavigationMetrics(
+      this.theme,
+      [
+        `${settled}/${total} agents`,
+        formatElapsed(snapshot),
+        formatContextUtilization(snapshot.usage),
+      ],
+      this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
+      snapshot.status === "running" ? undefined : statusColor(snapshot.status),
+    );
+    return [fitNavigationSides(left, right, width)];
+>>>>>>> 39145c3 (feat: polish OpenPI UI and stabilize delegate tools (#52))
   }
 }

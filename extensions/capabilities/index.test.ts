@@ -37,6 +37,11 @@ function harness(options: { discovery?: "explicit" | "adaptive" } = {}) {
     "fd",
     "rg",
     "subagent_spawn",
+    "subagent_wait",
+    "subagent_cancel",
+    "subagent_send",
+    "subagent_check",
+    "subagent_list",
   ];
   let active = [...available];
   const tools = new Map<string, CapturedTool>();
@@ -198,6 +203,11 @@ test("an explicit subagent request loads delegation directly", () => {
     "edit",
     "write",
     "subagent_spawn",
+    "subagent_wait",
+    "subagent_cancel",
+    "subagent_send",
+    "subagent_check",
+    "subagent_list",
   ]);
   assert.match(JSON.stringify(results), /skills\/subagents\/SKILL\.md/);
 });

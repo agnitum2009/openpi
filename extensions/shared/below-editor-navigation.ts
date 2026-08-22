@@ -1,6 +1,7 @@
 import type {
   AppKeybinding,
   KeybindingsManager,
+  Theme,
 } from "@earendil-works/pi-coding-agent";
 import type {
   AutocompleteProvider,
@@ -326,6 +327,31 @@ export class BelowEditorNavigationEditor implements EditorComponent, Focusable {
   setAutocompleteMaxVisible(maxVisible: number) {
     this.base.setAutocompleteMaxVisible?.(maxVisible);
   }
+}
+
+/**
+ * Metrics tail for a below-editor strip: quiet values, quieter separators, and
+ * a hint that recedes furthest.
+ *
+ * The whole tail used to be painted in the status colour, which made a routine
+ * "0/1 agents · 9m51s · ↓ to manage" shout as loudly as a failure. The status
+ * already has a coloured square on the left edge, so the tail only borrows that
+ * colour for the one count that carries the outcome — and only once the run has
+ * settled, where the colour means something.
+ */
+export function renderNavigationMetrics(
+  theme: Theme,
+  parts: readonly (string | undefined)[],
+  hint: string,
+  emphasis?: Parameters<Theme["fg"]>[0],
+) {
+  const present = parts.filter((part): part is string => Boolean(part));
+  const styled = present.map((part, index) =>
+    index === 0 && emphasis
+      ? theme.fg(emphasis, part)
+      : theme.fg("muted", part),
+  );
+  return [...styled, theme.fg("dim", hint)].join(theme.fg("dim", " · "));
 }
 
 /** Fit a left label and right metrics into exactly one bounded terminal row. */

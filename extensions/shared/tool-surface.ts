@@ -18,14 +18,15 @@ export const OPENPI_TOOL_SURFACE = {
     deferred: [],
   },
   subagents: {
-    entry: ["subagent_spawn"],
-    deferred: [
+    entry: [
+      "subagent_spawn",
       "subagent_wait",
       "subagent_cancel",
       "subagent_send",
       "subagent_check",
       "subagent_list",
     ],
+    deferred: [],
   },
   workflows: {
     entry: ["workflow"],

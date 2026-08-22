@@ -4,17 +4,37 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
+  type Component,
   Key,
   matchesKey,
   Text,
-  truncateToWidth,
-  type Component,
   type TUI,
+  truncateToWidth,
+  visibleWidth,
 } from "@earendil-works/pi-tui";
+import { fitNavigationSides } from "../shared/below-editor-navigation.ts";
+import {
+  hintLine,
+  panelFrame,
+  screenTitleLine,
+} from "../shared/screen-chrome.ts";
 import type { TaskItem, TaskSnapshot } from "./tasks.ts";
 import { taskMatchesDescription } from "./tasks.ts";
 import { getTaskWidgetAttachment } from "../shared/task-widget-attachment.ts";
 import { getRunningSubagentDescriptions } from "../shared/task-reconcile.ts";
+
+/**
+ * One colour per status, shared by every surface. The widget used to paint
+ * in-progress amber while the full list painted it accent, so the same item
+ * changed colour depending on where you looked at it.
+ */
+const STATUS_COLOR = {
+  pending: "muted",
+  in_progress: "accent",
+  blocked: "warning",
+  done: "success",
+  dropped: "error",
+} as const satisfies Record<TaskItem["status"], string>;
 
 const STATUS_ICON: Record<TaskItem["status"], string> = {
   pending: "○",
@@ -137,45 +157,41 @@ export function taskCounts(items: readonly TaskItem[]): TaskCounts {
 }
 
 /**
- * One-line census: `4 tasks (3 done, 1 in progress, 0 open)`.
+ * One-line census: `4 tasks · 3 done · 1 open`.
  *
- * Counts carry the weight and the words recede, so the shape of the batch
- * reads before any individual row does. `done`, `in progress`, and `open` are
- * always listed even at zero — a stable set of three keeps the line from
- * reflowing as work moves between them. `blocked` and `dropped` are
- * exceptional and appear only when they are not zero.
+ * Colour carries the status and the total anchors the line, so nothing needs
+ * bold numbers alternating with dim words — that zebra was the loudest thing
+ * on screen and said the least. Zeros are dropped: "0 in progress" costs a
+ * segment to tell you nothing, and a segment appearing when work starts is a
+ * signal, not a glitch. When one status covers everything the redundant count
+ * collapses to `all`, so a fresh batch reads `8 tasks · all open` rather than
+ * `8 tasks · 8 open`.
  *
  * Takes counts rather than items because a view often shows a bounded subset
  * of rows; the header must describe the whole batch regardless.
  */
 export function renderTaskSummary(counts: TaskCounts, theme: Theme): string {
-  const number = (value: number) => theme.bold(theme.fg("text", String(value)));
-  const dim = (text: string) => theme.fg("dim", text);
   // Coerced, not trusted: these counts can arrive from a tool-result record
   // persisted by an older build, where a missing key would render the literal
   // word "undefined" (or "NaN tasks") into the header.
   const count = (status: TaskItem["status"]) =>
     Number.isFinite(counts[status]) ? counts[status] : 0;
   const total = Number.isFinite(counts.total) ? counts.total : 0;
+  if (total <= 0) return theme.fg("dim", "no tasks");
+  const present = SUMMARY_ORDER.filter((status) => count(status) > 0);
   // Built segment by segment rather than by wrapping the whole line: each
   // styled run emits its own reset, so an outer color would stop applying at
   // the first inner one.
-  const parts = SUMMARY_ORDER.filter(
-    (status) =>
-      status === "done" ||
-      status === "in_progress" ||
-      status === "pending" ||
-      count(status) > 0,
-  ).map((status) => `${number(count(status))} ${dim(SUMMARY_LABEL[status])}`);
+  const chips = present.map((status) =>
+    theme.fg(
+      STATUS_COLOR[status],
+      `${present.length === 1 && count(status) === total ? "all" : count(status)} ${SUMMARY_LABEL[status]}`,
+    ),
+  );
   return [
-    number(total),
-    " ",
-    dim(total === 1 ? "task" : "tasks"),
-    " ",
-    dim("("),
-    parts.join(dim(", ")),
-    dim(")"),
-  ].join("");
+    theme.fg("dim", `${total} ${total === 1 ? "task" : "tasks"}`),
+    ...chips,
+  ].join(theme.fg("dim", " · "));
 }
 
 export interface TaskToolDetails {
@@ -201,16 +217,7 @@ export function renderTaskRows(
   // (all of them) — would otherwise shift every subject sideways by a column.
   const idWidth = Math.max(...items.map((item) => `T${item.id}`.length), 3);
   return items.flatMap((item) => {
-    const color =
-      item.status === "done"
-        ? "success"
-        : item.status === "blocked"
-          ? "warning"
-          : item.status === "dropped"
-            ? "error"
-            : item.status === "in_progress"
-              ? "accent"
-              : "muted";
+    const color = STATUS_COLOR[item.status];
     // No `[status]` text: the icon, its color, and the subject's own weight
     // already say it, and repeating it in words crowded every row.
     const id = `T${item.id}`.padStart(idWidth);
@@ -285,17 +292,23 @@ export function renderTaskWidget(
 
   const hasOverflow = all.length > TASK_WIDGET_LIMIT;
   const toggleHint = hasOverflow
-    ? `  ·  ctrl+shift+t ${expanded ? "collapse" : "show all"}`
+    ? ` · ctrl+shift+t ${expanded ? "collapse" : "show all"}`
     : "";
   // Same census as the full list and the /tasks screen. Counted over `tracked`
   // rather than every item, because the widget deliberately hides dropped work
   // and a total that included it would not add up against the rows shown.
+  //
+  // Hints sit on the right edge instead of trailing the census, so the eye lands
+  // on state first and the keystrokes stay out of the way until wanted. They are
+  // dropped rather than truncated when the terminal is too narrow to hold both.
+  const label =
+    theme.fg("accent", "◆ ") + theme.fg("text", theme.bold("Tasks"));
+  const left = `${label}  ${renderTaskSummary(taskCounts(tracked), theme)}`;
+  const hint = theme.fg("dim", `/tasks${toggleHint}`);
   const header =
-    theme.fg("accent", "◆ ") +
-    theme.fg("text", theme.bold("Tasks")) +
-    "  " +
-    renderTaskSummary(taskCounts(tracked), theme) +
-    theme.fg("dim", `  ·  /tasks${toggleHint}`);
+    visibleWidth(left) + visibleWidth(hint) + 3 <= width
+      ? fitNavigationSides(left, hint, width)
+      : left;
   const visible = expanded ? all : all.slice(0, TASK_WIDGET_LIMIT);
   const hidden = all.length - visible.length;
   // Right-aligned like the full list, with the same floor: a widget whose ids
@@ -508,41 +521,41 @@ class TasksScreen implements Component {
 
   render(width: number) {
     // Live snapshot: the s-key sync mutates tasks while the screen is open,
-    // and a stale render would make the sync look like a no-op.
+    // and a stale render would make the sync look like a no-op (upstream
+    // cached this.snapshot; local TasksScreen keeps the dynamic getter).
     const snapshot = this.getSnapshot();
-    const body = renderTaskRows(snapshot.items, this.theme, width - 4);
-    const rows = Math.max(8, (this.tui.terminal.rows || 30) - 8);
+    const theme = this.theme;
+    const counts = taskCounts(snapshot.items);
+    const body = renderTaskRows(snapshot.items, theme, width - 4);
+    // Title (1) + frame (2) + hint (1): one row more chrome than the old bare
+    // rule, so the body gives one back and the screen keeps its total height.
+    const rows = Math.max(8, (this.tui.terminal.rows || 30) - 9);
     const maxOffset = Math.max(0, body.length - rows);
     this.offset = Math.min(this.offset, maxOffset);
     const visible = body.slice(this.offset, this.offset + rows);
-    const lines = [
-      truncateToWidth(
-        `${this.theme.fg("accent", this.theme.bold("Session tasks"))}  ${renderTaskSummary(taskCounts(snapshot.items), this.theme)}`,
+    // Framed like /subagents, /ps, and /workflows rather than a bare rule: a
+    // full-screen view of a list is the same object in each of them, and it
+    // should not look like a different control here.
+    return [
+      screenTitleLine(theme, "Session tasks", "", width),
+      ...panelFrame(theme, {
+        label: renderTaskSummary(counts, theme),
+        rows: visible.map((line) => ` ${line}`),
+        width,
+        height: rows + 2,
+      }),
+      hintLine(
+        theme,
+        [
+          ["j/k or ↑/↓", "scroll"],
+          ["pgup/pgdn", "page"],
+          ["s", "sync stale"],
+          ["esc", "close"],
+        ],
         width,
       ),
-      this.theme.fg("border", "─".repeat(Math.max(0, width))),
-      ...visible.map((line) => truncateToWidth(`  ${line}`, width)),
     ];
-    while (lines.length < rows + 2) lines.push("");
-    lines.push(
-      truncateToWidth(
-        this.theme.fg(
-          "dim",
-          "j/k or ↑/↓ scroll · pgup/pgdn page · s sync stale · esc close",
-        ),
-        width,
-      ),
-    );
-    return lines;
   }
-
-  invalidate() {}
-}
-
-export async function openTasksScreen(
-  ctx: ExtensionCommandContext,
-  getSnapshot: () => TaskSnapshot,
-  onSyncStale: () => void = () => {},
 ) {
   if (ctx.mode !== "tui") {
     if (ctx.hasUI)

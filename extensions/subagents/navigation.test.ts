@@ -36,6 +36,11 @@ function snapshot(
   };
 }
 
+const markingTheme = {
+  fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
+  bold: (text: string) => text,
+} as unknown as Theme;
+
 const theme = {
   fg: (_color: string, text: string) => text,
   bold: (text: string) => text,
@@ -118,6 +123,7 @@ test("subagent HUD mirrors omp: header plus one row per running subagent", () =>
     widget.dispose();
   }
 });
+
 
 test("subagent HUD collapses running rows past its limit", () => {
   const strip = new BelowEditorStripState();
@@ -243,4 +249,45 @@ test("running rows show intent fallback, failure streak, and stall warning", () 
   } finally {
     stalled.dispose();
   }
+
+
+test("the metrics tail stays quiet while a run is healthy", () => {
+  const strip = new BelowEditorStripState();
+  const render = (status: SubagentSnapshot["status"]) => {
+    const entries = [
+      snapshot(
+        "sa-1",
+        status,
+        Date.now() - 2_000,
+        status === "running" ? undefined : Date.now(),
+      ),
+    ];
+    const entry = selectSubagentStripEntry(entries, 0);
+    const widget = new SubagentStripWidget(
+      { requestRender() {} } as unknown as TUI,
+      markingTheme,
+      strip,
+      () => entry,
+      () => entries,
+    );
+    try {
+      return widget.render(400)[0]!;
+    } finally {
+      widget.dispose();
+    }
+  };
+
+  // A routine run borrows no status colour in its tail: the coloured square on
+  // the left already carries the state, and hints recede furthest of all.
+  const running = render("running");
+  assert.match(running, /<muted>1 running<\/muted>/);
+  assert.match(running, /<dim>↓ to manage<\/dim>/);
+  assert.doesNotMatch(running, /<warning>1 running/);
+
+  // Once settled, the one count that carries the outcome takes the colour.
+  assert.match(render("error"), /<error>1 failed<\/error>/);
+  assert.match(render("done"), /<success>1 done<\/success>/);
+});
+
+(feat: polish OpenPI UI and stabilize delegate tools (#52))
 });

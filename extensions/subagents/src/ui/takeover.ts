@@ -13,15 +13,20 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { Component, Focusable, TUI } from "@earendil-works/pi-tui";
 import { Input, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+  hintLine,
+  panelFrame,
+  type ScreenHint,
+} from "../../../shared/screen-chrome.ts";
 import { sanitizeTerminalText } from "../../../shared/terminal-text.ts";
 import { formatElapsed, type SubagentSnapshot } from "../domain.ts";
 import { formatContextUtilization } from "../format.ts";
 import type { SubagentReadModel } from "../manager.ts";
 import {
-  SPINNER_INTERVAL_MS,
-  TranscriptRenderer,
   buildTranscriptLines,
+  SPINNER_INTERVAL_MS,
   spinnerFrame,
+  TranscriptRenderer,
 } from "./transcript.ts";
 
 export function sanitizeSubagentDisplayLine(value: string) {
@@ -258,24 +263,6 @@ export class SubagentDashboard implements Component {
     }
   }
 
-  private pad(text: string, width: number): string {
-    const truncated = truncateToWidth(text, width);
-    return truncated + " ".repeat(Math.max(0, width - visibleWidth(truncated)));
-  }
-
-  private borderSegment(width: number, title: string): string {
-    const theme = this.theme;
-    const label = title
-      ? ` ${truncateToWidth(title, Math.max(0, width - 3))} `
-      : "";
-    const labelWidth = visibleWidth(label);
-    return (
-      theme.fg("border", "─") +
-      (label ? theme.fg("text", label) : "") +
-      theme.fg("border", "─".repeat(Math.max(0, width - 1 - labelWidth)))
-    );
-  }
-
   render(width: number): string[] {
     const theme = this.theme;
     const subs = this.subs();
@@ -289,7 +276,6 @@ export class SubagentDashboard implements Component {
       subs.length > maxBodyHeight ? maxBodyHeight : Math.max(1, subs.length);
     const innerWidth = Math.max(0, width - 2);
 
-    const lines: string[] = [];
     const running = subs.filter((snap) => snap.status === "running").length;
     const done = subs.filter((snap) => snap.status === "done").length;
     const failed = subs.filter((snap) => snap.status === "error").length;
@@ -301,37 +287,30 @@ export class SubagentDashboard implements Component {
       ]
         .filter(Boolean)
         .join(" · ") || "no agents";
-    lines.push(
-      theme.fg("border", "╭") +
-        this.borderSegment(innerWidth, `Subagents · ${summary}`) +
-        theme.fg("border", "╮"),
-    );
-
-    const divider = theme.fg("border", "│");
     const rowLines = this.renderRows(subs, innerWidth, bodyHeight, now);
-    for (const row of rowLines) {
-      lines.push(divider + this.pad(row, innerWidth) + divider);
-    }
-
-    // Bottom border
-    lines.push(
-      theme.fg("border", "╰") +
-        theme.fg("border", "─".repeat(innerWidth)) +
-        theme.fg("border", "╯"),
-    );
-
-    // Hints
-    lines.push(
-      truncateToWidth(
-        theme.fg(
-          "dim",
-          `  ${configuredKeys(this.keybindings, "tui.select.up")}/${configuredKeys(this.keybindings, "tui.select.down")}/jk select · ${configuredKeys(this.keybindings, "tui.select.confirm")} take over · x abort · ${configuredKeys(this.keybindings, "tui.select.cancel")} close`,
-        ),
+    const keys = (binding: Parameters<KeybindingsManager["getKeys"]>[0]) =>
+      configuredKeys(this.keybindings, binding);
+    // Shared chrome, so this panel and its hints read the same as /ps and
+    // /workflows. The frame is padded to the rows it was given, which keeps
+    // this view's content-fit height rather than reintroducing a fixed one.
+    return [
+      ...panelFrame(theme, {
+        label: `Subagents · ${summary}`,
+        rows: rowLines,
+        width,
+        height: rowLines.length + 2,
+      }),
+      hintLine(
+        theme,
+        [
+          [`${keys("tui.select.up")}/${keys("tui.select.down")}/jk`, "select"],
+          [keys("tui.select.confirm"), "take over"],
+          ["x", "abort"],
+          [keys("tui.select.cancel"), "close"],
+        ],
         width,
       ),
-    );
-
-    return lines;
+    ];
   }
 
   private renderRows(
@@ -694,13 +673,29 @@ export class TakeoverView implements Component, Focusable {
       ),
     );
     lines.push(...this.input.render(width));
-    const hints = `${configuredKeys(this.keybindings, "tui.input.submit")} send · ${configuredKeys(this.keybindings, "app.interrupt")} back · ${configuredKeys(this.keybindings, "app.clear")} abort run · ${configuredKeys(this.keybindings, "tui.editor.cursorUp")}/${configuredKeys(this.keybindings, "tui.editor.cursorDown")} scroll · ${configuredKeys(this.keybindings, "tui.editor.pageUp")}/${configuredKeys(this.keybindings, "tui.editor.pageDown")} page`;
-    const compactHints = `${configuredKeys(this.keybindings, "tui.input.submit")} send · ${configuredKeys(this.keybindings, "app.interrupt")} back · ${configuredKeys(this.keybindings, "app.clear")} abort run · ${configuredKeys(this.keybindings, "tui.editor.cursorUp")}/${configuredKeys(this.keybindings, "tui.editor.cursorDown")} scroll`;
+    const keys = (binding: Parameters<KeybindingsManager["getKeys"]>[0]) =>
+      configuredKeys(this.keybindings, binding);
+    const editing: ScreenHint[] = [
+      [keys("tui.input.submit"), "send"],
+      [keys("app.interrupt"), "back"],
+      [keys("app.clear"), "abort run"],
+      [
+        `${keys("tui.editor.cursorUp")}/${keys("tui.editor.cursorDown")}`,
+        "scroll",
+      ],
+    ];
+    // Same drop-the-page-hint fallback as before, measured on the styled line
+    // so the keys-brighter-than-labels styling cannot change what fits.
+    const full = hintLine(
+      theme,
+      [
+        ...editing,
+        [`${keys("tui.editor.pageUp")}/${keys("tui.editor.pageDown")}`, "page"],
+      ],
+      width,
+    );
     lines.push(
-      truncateToWidth(
-        theme.fg("dim", visibleWidth(hints) <= width ? hints : compactHints),
-        width,
-      ),
+      visibleWidth(full) <= width ? full : hintLine(theme, editing, width),
     );
     lines.push(this.rule(width, theme.fg("borderAccent", "─")));
     return lines;

@@ -4,6 +4,7 @@ import {
   BelowEditorStripState,
   belowEditorStripInput,
   fitNavigationSides,
+  renderNavigationMetrics,
 } from "../shared/below-editor-navigation.ts";
 import { requestWidgetRepaint } from "../shared/ui-screen.ts";
 import { sanitizeTerminalText } from "../shared/terminal-text.ts";
@@ -84,20 +85,22 @@ export class WorkflowStripWidget {
     const name = this.strip.focused
       ? this.theme.bold(this.theme.fg("accent", displayName))
       : this.theme.fg("text", displayName);
-    const left = ` ${marker} ${statusSquare(details.status, this.theme)} ${this.theme.fg("text", this.theme.bold("Workflow"))} · ${name}`;
-    const metrics = [
-      running > 0 ? `${running} running` : undefined,
-      settled > 0 ? `${settled} done` : undefined,
-      failed > 0 ? `${failed} failed` : undefined,
-      formatElapsed(details.startedAt, details.finishedAt),
-      tokenCount > 0 ? `${formatTokens(tokenCount)} tokens` : undefined,
+    const rawContext = details.currentPhase ?? details.description;
+    const context = rawContext ? cleanLine(rawContext) : undefined;
+    const left = ` ${marker} ${statusSquare(details.status, this.theme)} ${name}${context ? this.theme.fg("dim", ` · ${context}`) : ""}`;
+    const right = renderNavigationMetrics(
+      this.theme,
+      [
+        running > 0 ? `${running} running` : undefined,
+        settled > 0 ? `${settled} done` : undefined,
+        failed > 0 ? `${failed} failed` : undefined,
+        formatElapsed(details.startedAt, details.finishedAt),
+        tokenCount > 0 ? `${formatTokens(tokenCount)} tokens` : undefined,
+      ],
       this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
-    ]
-      .filter((part): part is string => Boolean(part))
-      .join(" · ");
-    lines.push(
-      fitNavigationSides(left, this.theme.fg("accent", metrics), width),
+      details.status === "running" ? undefined : statusColor(details.status),
     );
+    lines.push(fitNavigationSides(left, right, width));
 
     // One row per agent, same `■ label · phase` shape as the Subagents rows.
     const visible = details.agents.slice(0, WORKFLOW_HUD_ROWS);
@@ -140,6 +143,22 @@ export class WorkflowStripWidget {
       );
     }
     return lines;
+=======
+    const rawContext = details.currentPhase ?? details.description;
+    const context = rawContext ? cleanLine(rawContext) : undefined;
+    const left = ` ${marker} ${statusSquare(details.status, this.theme)} ${name}${context ? this.theme.fg("dim", ` · ${context}`) : ""}`;
+    const right = renderNavigationMetrics(
+      this.theme,
+      [
+        `${settled}/${details.agents.length} agents`,
+        formatElapsed(details.startedAt, details.finishedAt),
+        tokenCount > 0 ? `${formatTokens(tokenCount)} tokens` : undefined,
+      ],
+      this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
+      details.status === "running" ? undefined : statusColor(details.status),
+    );
+    return [fitNavigationSides(left, right, width)];
+>>>>>>> 39145c3 (feat: polish OpenPI UI and stabilize delegate tools (#52))
   }
 }
 

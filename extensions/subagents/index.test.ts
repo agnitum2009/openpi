@@ -132,7 +132,7 @@ test("the visible subagent result entry renders the completed report", () => {
   );
 });
 
-test("session start keeps only the subagent entry tool active", () => {
+test("session start preserves the complete registered subagent family", () => {
   let active = ["read", "third_party_tool"];
   const registered: string[] = [];
   let sessionStart:
@@ -177,7 +177,82 @@ test("session start keeps only the subagent entry tool active", () => {
       "subagent_list",
     ],
   );
-  assert.deepEqual(active, ["read", "third_party_tool", "subagent_spawn"]);
+  assert.deepEqual(
+    new Set(active),
+    new Set(["read", "third_party_tool", ...registered]),
+  );
+});
+
+test("the complete subagent family fails closed before the first spawn", async () => {
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  const tools = new Map<
+    string,
+    {
+      execute: (...args: unknown[]) => Promise<{
+        content: Array<{ type: string; text: string }>;
+      }>;
+    }
+  >();
+  const pi = {
+    on(event: string, handler: (...args: unknown[]) => unknown) {
+      handlers.set(event, handler);
+    },
+    events: { on() {} },
+    registerTool(tool: {
+      name: string;
+      execute: (...args: unknown[]) => Promise<{
+        content: Array<{ type: string; text: string }>;
+      }>;
+    }) {
+      tools.set(tool.name, tool);
+    },
+    getActiveTools: () => [],
+    setActiveTools() {},
+    registerMessageRenderer() {},
+    registerEntryRenderer() {},
+    registerCommand() {},
+  } as unknown as ExtensionAPI;
+  const ctx = {
+    cwd: process.cwd(),
+    hasUI: false,
+    isIdle: () => true,
+    isProjectTrusted: () => false,
+  } as unknown as ExtensionContext;
+
+  subagents(pi);
+  await handlers.get("session_start")?.({}, ctx);
+
+  const invoke = (name: string, params: unknown) =>
+    tools
+      .get(name)!
+      .execute(
+        `call-${name}`,
+        params,
+        new AbortController().signal,
+        undefined,
+        ctx,
+      );
+
+  try {
+    const listed = await invoke("subagent_list", {});
+    assert.equal(listed.content[0]?.text, "No subagents.");
+    await assert.rejects(
+      invoke("subagent_check", { id: "sa-missing" }),
+      /Unknown subagent id "sa-missing"\. Known: none\./,
+    );
+    await assert.rejects(
+      invoke("subagent_send", { id: "sa-missing", text: "hello" }),
+      /Unknown subagent id "sa-missing"\. Known: none\./,
+    );
+    for (const name of ["subagent_wait", "subagent_cancel"]) {
+      await assert.rejects(
+        invoke(name, { ids: ["sa-missing"] }),
+        /Unknown subagent id\(s\): sa-missing\. Known: none\./,
+      );
+    }
+  } finally {
+    await handlers.get("session_shutdown")?.();
+  }
 });
 
 async function withTempDir(run: (directory: string) => Promise<void>) {

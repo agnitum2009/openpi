@@ -14,51 +14,57 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  getAgentDir,
   type ExtensionContext,
+  getAgentDir,
   type KeybindingsManager,
 } from "@earendil-works/pi-coding-agent";
 import {
   Key,
   matchesKey,
+  type TUI,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
-  type TUI,
 } from "@earendil-works/pi-tui";
-import { isAcceptanceLedger } from "./acceptance.ts";
 import {
-  agentContext,
-  countStates,
-  formatElapsed,
-  formatUsage,
-  aggregateUsage,
-  isWorkflowRunId,
-  MAX_LOG_TEXT,
-  phaseGroups,
-  resultJson,
-  resolveWorkflowRunTarget,
-  sanitizeLine,
-  shortenHome,
-  stateSquare,
-  statusColor,
-  statusWord,
-  SQUARE,
-  type Theme,
-  type AgentRecord,
-  type AgentUsage,
-  type PhaseGroup,
-  type TranscriptEntry,
-  type WorkflowDetails,
-  type WorkflowLogEntry,
-  workflowGraphRecords,
-} from "./model.ts";
+  panelFrame,
+  type ScreenHint,
+  screenTitleLine,
+  hintLine as sharedHintLine,
+} from "../shared/screen-chrome.ts";
 import { sanitizeTerminalText } from "../shared/terminal-text.ts";
+import { isAcceptanceLedger } from "./acceptance.ts";
 import { projectWorkflowGraph } from "./graph-projection.ts";
 import {
   classifyInterruptedInvocation,
   decodeInvocationRecord,
 } from "./invocation-ledger.ts";
+import {
+  type AgentRecord,
+  type AgentUsage,
+  agentContext,
+  aggregateUsage,
+  countStates,
+  formatElapsed,
+  formatUsage,
+  isWorkflowRunId,
+  MAX_LOG_TEXT,
+  type PhaseGroup,
+  phaseGroups,
+  resolveWorkflowRunTarget,
+  resultJson,
+  SQUARE,
+  sanitizeLine,
+  shortenHome,
+  stateSquare,
+  statusColor,
+  statusWord,
+  type Theme,
+  type TranscriptEntry,
+  type WorkflowDetails,
+  type WorkflowLogEntry,
+  workflowGraphRecords,
+} from "./model.ts";
 import { writeFileAtomic } from "./serialization.ts";
 
 const NOTICE_TTL_MS = 4000;
@@ -887,23 +893,7 @@ export class WorkflowDashboard {
     width: number,
     height: number,
   ): string[] {
-    const theme = this.theme;
-    const inner = Math.max(0, width - 2);
-    const border = (s: string) => theme.fg("borderMuted", s);
-    const titleText = truncateToWidth(` ${title} `, Math.max(0, inner - 2));
-    const dashes = Math.max(0, inner - visibleWidth(titleText) - 1);
-    const lines: string[] = [
-      border("╭─") + titleText + border("─".repeat(dashes) + "╮"),
-    ];
-    const bodyHeight = Math.max(0, height - 2);
-    for (let i = 0; i < bodyHeight; i++) {
-      const row = rows[i] ?? "";
-      const clipped = truncateToWidth(row, inner, "…");
-      const pad = Math.max(0, inner - visibleWidth(clipped));
-      lines.push(border("│") + clipped + " ".repeat(pad) + border("│"));
-    }
-    lines.push(border("╰" + "─".repeat(inner) + "╯"));
-    return lines;
+    return panelFrame(this.theme, { label: title, rows, width, height });
   }
 
   /** Scroll window keeping `selected` visible. */
@@ -924,25 +914,21 @@ export class WorkflowDashboard {
     return this.keybindings.getKeys(binding).join("/") || "unbound";
   }
 
-  private hintLine(hint: string, width: number): string {
-    const theme = this.theme;
-    if (this.notice)
-      return truncateToWidth(theme.fg("accent", ` ${this.notice}`), width);
-    return truncateToWidth(theme.fg("dim", ` ${hint}`), width);
+  private hintLine(hints: readonly ScreenHint[], width: number): string {
+    return sharedHintLine(this.theme, hints, width, this.notice);
   }
 
   private renderList(width: number, height: number): string[] {
     const theme = this.theme;
     const lines: string[] = [];
-    const header = this.split(
-      " " + theme.bold(theme.fg("accent", "Workflows")),
-      theme.fg(
-        "dim",
-        `${this.entries.length} run${this.entries.length === 1 ? "" : "s"} `,
+    lines.push(
+      screenTitleLine(
+        theme,
+        "Workflows",
+        `${this.entries.length} run${this.entries.length === 1 ? "" : "s"}`,
+        width,
       ),
-      width,
     );
-    lines.push(header);
 
     const panelHeight = height - 2;
     const bodyHeight = Math.max(0, panelHeight - 2);
@@ -957,7 +943,7 @@ export class WorkflowDashboard {
         ),
       );
       lines.push(
-        this.hintLine(`${this.keys("tui.select.cancel")} close`, width),
+        this.hintLine([[this.keys("tui.select.cancel"), "close"]], width),
       );
       return lines;
     }
@@ -991,7 +977,15 @@ export class WorkflowDashboard {
     lines.push(...this.panel("Runs", rows, width, panelHeight));
     lines.push(
       this.hintLine(
-        `${this.keys("tui.select.up")}/${this.keys("tui.select.down")} select · ${this.keys("tui.select.confirm")} open · x stop · ${this.keys("tui.select.cancel")} close`,
+        [
+          [
+            `${this.keys("tui.select.up")}/${this.keys("tui.select.down")}`,
+            "select",
+          ],
+          [this.keys("tui.select.confirm"), "open"],
+          ["x", "stop"],
+          [this.keys("tui.select.cancel"), "close"],
+        ],
         width,
       ),
     );
@@ -1170,11 +1164,32 @@ export class WorkflowDashboard {
       );
     }
 
-    const hint =
+    const hints: ScreenHint[] =
       this.detailFocus === "phases"
-        ? `j/k select phase · l/${this.keys("tui.editor.cursorRight")}/${this.keys("tui.select.confirm")} agents · ${this.keys("tui.select.cancel")} back · x stop · s save report`
-        : `j/k select agent · h/${this.keys("tui.editor.cursorLeft")}/${this.keys("tui.select.cancel")} phases · l/${this.keys("tui.editor.cursorRight")}/${this.keys("tui.select.confirm")} details · x stop · s save report`;
-    lines.push(this.hintLine(hint, width));
+        ? [
+            ["j/k", "select phase"],
+            [
+              `l/${this.keys("tui.editor.cursorRight")}/${this.keys("tui.select.confirm")}`,
+              "agents",
+            ],
+            [this.keys("tui.select.cancel"), "back"],
+            ["x", "stop"],
+            ["s", "save report"],
+          ]
+        : [
+            ["j/k", "select agent"],
+            [
+              `h/${this.keys("tui.editor.cursorLeft")}/${this.keys("tui.select.cancel")}`,
+              "phases",
+            ],
+            [
+              `l/${this.keys("tui.editor.cursorRight")}/${this.keys("tui.select.confirm")}`,
+              "details",
+            ],
+            ["x", "stop"],
+            ["s", "save report"],
+          ];
+    lines.push(this.hintLine(hints, width));
     return lines;
   }
 
@@ -1261,7 +1276,12 @@ export class WorkflowDashboard {
     lines.push(...this.panel(position, visible, width, panelHeight));
     lines.push(
       this.hintLine(
-        "j/k scroll · ctrl-u/d page · g/G top/bottom · h/left/esc back",
+        [
+          ["j/k", "scroll"],
+          ["ctrl-u/d", "page"],
+          ["g/G", "top/bottom"],
+          ["h/left/esc", "back"],
+        ],
         width,
       ),
     );
