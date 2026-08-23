@@ -42,6 +42,7 @@ function cleanLine(value: string) {
 function statusGlyph(status: WorkflowStatus, theme: Theme, now: number) {
   if (status === "completed") return theme.fg("success", "✓");
   if (status === "running") return theme.fg("warning", spinnerFrame(now));
+  if (status === "uncertain") return theme.fg("warning", "?");
   return theme.fg("error", "✗");
 }
 
@@ -79,8 +80,7 @@ export class WorkflowStripWidget {
     const entry = this.getEntry();
     if (!entry) return [];
     const details = entry.details;
-    const { done, failed, running } = countStates(details);
-    const settled = done + failed;
+    const { done, failed, uncertain } = countStates(details);    const settled = done + failed;
     const usage = aggregateUsage(details.agents);
     const tokenCount = usage.input + usage.output;
     const lines: string[] = [];
@@ -101,10 +101,10 @@ export class WorkflowStripWidget {
     const right = renderNavigationMetrics(
       this.theme,
       [
-        running > 0 ? `${running} running` : undefined,
-        settled > 0 ? `${settled} done` : undefined,
-        failed > 0 ? `${failed} failed` : undefined,        formatElapsed(details.startedAt, details.finishedAt),
-        tokenCount > 0 ? `${formatTokens(tokenCount)} tokens` : undefined,
+        details.agents.length > 0
+          ? `${settled}/${details.agents.length} agents${uncertain ? ` · ${uncertain} uncertain` : ""}`
+          : undefined,
+        formatElapsed(details.startedAt, details.finishedAt),        tokenCount > 0 ? `${formatTokens(tokenCount)} tokens` : undefined,
       ],
       this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
       details.status === "running" ? undefined : statusColor(details.status),
