@@ -29,14 +29,13 @@ Source: `extensions/subagents/` (`index.ts`, `manager.ts`, `prompt.ts`,
 
 ### 1.1 Tools exposed to the parent LLM
 
-| Tool              | Parameters                                                                    | Behavior                                                                                                                                                                                                                                                                                                                           |
-| ----------------- | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `subagent_spawn`  | `prompt`, `title`, `working_dir?`, `model?`, `provider?`, `reasoning_effort?` | Fire-and-forget spawn. Returns immediately with an id (`sa-N`). Enforces `MAX_RUNNING = 4` with a synchronous reservation so parallel tool calls can't race past the cap. Validates `working_dir`, resolves model against the registry (inherit parent model/thinking level by default), truncates title to 160 chars.             |
-| `subagent_wait`   | `ids[]` (max 64)                                                              | Blocks until all listed subagents settle; respects the tool `AbortSignal`; streams `Waiting for ...` via `onUpdate`. Marks the awaited results "consumed" so they are not also auto-delivered. Output budgets: 48KB total, 16KB per agent, with per-section fallbacks (`[omitted: ...]`). Errors on unknown ids (lists known ids). |
-| `subagent_cancel` | `ids[]`                                                                       | Aborts running subagents (marks consumed first to avoid duplicate delivery), waits for settlement, reports per-id `Cancelled ...` / `was already <status>`. Partial transcripts remain on disk.                                                                                                                                    |
-| `subagent_check`  | `id`                                                                          | Non-blocking peek: status line, turn count, error text, up to 2KB/20 lines of latest output (includes the live streaming assistant message). Does not consume the result.                                                                                                                                                          |
-| `subagent_list`   | —                                                                             | One `describeSubagent()` line per agent: `id [status] "title" (provider/model, ctx%, elapsed, cwd)`.                                                                                                                                                                                                                               |
-
+| Tool | Parameters | Behavior |
+|---|---|---|
+| `subagent_spawn` | `prompt`, `title`, `working_dir?`, `model?`, `provider?`, `reasoning_effort?` | Fire-and-forget spawn. Returns immediately with an id (`sa-N`). Enforces `MAX_RUNNING = 4` with a synchronous reservation so parallel tool calls can't race past the cap. Validates `working_dir`, resolves model against the registry (inherit parent model/thinking level by default), truncates title to 160 chars. |
+| `subagent_wait` | `ids[]` (max 64) | Blocks until all listed subagents settle; respects the tool `AbortSignal`; streams `Waiting for ...` via `onUpdate`. Marks the awaited results "consumed" so they are not also auto-delivered. The hard output ceiling is 48 KiB, with a 16 KiB static per-agent cap. When Pi reports authoritative parent context usage, projections may narrow to 50% of the remaining headroom after fixed wrapper text; short results yield unused bytes to longer siblings. Unknown or invalid usage falls back to the static caps. Errors on unknown ids (lists known ids). |
+| `subagent_cancel` | `ids[]` | Aborts running subagents (marks consumed first to avoid duplicate delivery), waits for settlement, reports per-id `Cancelled ...` / `was already <status>`. Partial transcripts remain on disk. |
+| `subagent_check` | `id` | Non-blocking peek: status line, turn count, error text, up to 2KB/20 lines of latest output (includes the live streaming assistant message). Does not consume the result. |
+| `subagent_list` | — | One `describeSubagent()` line per agent: `id [status] "title" (provider/model, ctx%, elapsed, cwd)`. |
 Prompt metadata (all strings live in `prompt.ts`): `subagent_spawn` has a
 `promptSnippet` and two `promptGuidelines` (delegate self-contained tasks; release an
 interactive turn instead of blocking merely because later work depends on a child).
@@ -79,9 +78,13 @@ errorText?, unsubscribeLifecycle }`.
 - Delivery = `pi.sendMessage({ customType: "subagent-result", content, display: true,
 details: { id, title, status } }, { deliverAs: "followUp", triggerTurn: true })`.
   Content is built by `buildSubagentResultMessage` (`Subagent sa-N "title"
-finished/failed.` + optional `Error:` line + output truncated to 24KB/600 lines with a
-  pointer to the child session file for the full transcript).
-
+  finished/failed.` + optional `Error:` line). Automatic batches have a 48 KiB
+  hard ceiling and a 24 KiB static per-result cap. As with `subagent_wait`, Pi's
+  authoritative context usage can narrow the projection budget dynamically; the
+  fixed headers, separators, and guidance are charged before result bytes are
+  allocated. Oversized results retain roughly 75% head + 25% tail and point to an exact,
+  content-addressed final-answer artifact below the Pi agent cache; the parent
+  can page it with Pi's native `read` instead of parsing the child session JSONL).
 ### 1.4 UI (carried over into v2 essentially as-is)
 
 1. **Footer status** (`ctx.ui.setStatus("subagents", ...)`): `subagents: 2 running ·
@@ -141,7 +144,9 @@ Common denominator all three can supply:
   token usage, errors;
 - a way to send a follow-up/steering user message into a live session;
 - an interrupt operation;
-- a final result text per run;
+- a final result text per run; oversized parent projections preserve both the
+  head and tail, while the exact final text remains available as a plain-text
+  artifact for native `read` pagination;
 - metadata: backend name, model identifier, session/log file path (pi session file,
   Claude session id + projects dir JSONL, Codex rollout path), working dir.
 
@@ -595,8 +600,14 @@ Recommendation: (a) during development, rename to final names when v2 replaces v
 7. **Binary/SDK discovery + failure UX.** When `codex`/`claude` isn't installed or has
    no credentials, should `subagent_spawn` fail fast with a clear tool error (proposed),
    or should the backends be hidden from the `agent` enum dynamically?
-8. **Result truncation budgets.** Keep v1's numbers (24KB result message, 48KB wait
-   total, 16KB per agent, 2KB check preview) unchanged?
+8. **Result projection budgets (resolved).** Keep the 24 KiB automatic per-result,
+   48 KiB batch, 16 KiB wait per-agent, and 2 KiB check ceilings as static safety
+   caps. For automatic delivery and explicit waits, narrow the projection when Pi's
+   authoritative parent-context reading shows less headroom: spend at most 50% of
+   the remaining tokens (estimated at four UTF-8 bytes each), subtract fixed wrapper
+   text first, and distribute the remainder across the batch. The runtime does not
+   maintain a second token counter; missing or stale Pi usage falls back to static
+   caps. Exact content remains in the artifact regardless of projection size.
 9. **Effect version pinning.** Effect v4 is beta — pin an exact `4.0.0-beta.x` and
    accept manual bumps, or track the beta dist-tag?
 10. **Persistence across reloads.** v1 loses all subagents on `session_shutdown`
