@@ -133,6 +133,12 @@ import {
   type SubagentRuntime,
 } from "./src/runtime.ts";
 import {
+  restoreSubagentIdCounters,
+  SUBAGENT_ID_WATERMARK_ENTRY_TYPE,
+  subagentIdWatermark,
+  type SubagentIdCounters,
+} from "./src/id-sequence.ts";
+import {
   normalizeSubagentTitle,
   selectSubagentStripEntry,
   SubagentStripWidget,
@@ -317,6 +323,10 @@ function renderSubagentResult(
 export default function (pi: ExtensionAPI) {
   let runtime: SubagentRuntime | undefined;
   let managerPromise: Promise<SubagentManagerShape> | undefined;
+  let restoredIdCounters: SubagentIdCounters = {
+    modelCounter: 0,
+    btwCounter: 0,
+  };
   let sessionContext: ExtensionContext | undefined;
   let ui: ExtensionUIContext | undefined;
   let unsubStatus: (() => void) | undefined;
@@ -346,7 +356,14 @@ export default function (pi: ExtensionAPI) {
       enable: OPENPI_TOOL_SURFACE.subagents.entry,
     });
 
-  const getRuntime = () => (runtime ??= createSubagentRuntime());
+  const getRuntime = () =>
+    (runtime ??= createSubagentRuntime({
+      initialModelCounter: restoredIdCounters.modelCounter,
+      initialBtwCounter: restoredIdCounters.btwCounter,
+    }));
+
+  const persistId = (id: string) =>
+    pi.appendEntry(SUBAGENT_ID_WATERMARK_ENTRY_TYPE, subagentIdWatermark(id));
 
   /** Resolve the manager service once per runtime and wire the extension hooks. */
   const getManager = () => {
@@ -551,6 +568,9 @@ export default function (pi: ExtensionAPI) {
   };
 
   pi.on("session_start", (_event, ctx) => {
+    restoredIdCounters = restoreSubagentIdCounters(
+      ctx.sessionManager.getBranch(),
+    );
     refreshAgentTypes(ctx.cwd, ctx.isProjectTrusted());
     registerStableToolFamily();
     sessionContext = ctx;
@@ -801,6 +821,7 @@ export default function (pi: ExtensionAPI) {
         if (worktree) await reclaimWorktree(cwd, worktree).catch(() => {});
         throw error;
       }
+      persistId(snap.id);
 
       return {
         content: [
@@ -1289,6 +1310,7 @@ export default function (pi: ExtensionAPI) {
       );
       return;
     }
+    persistId(snap.id);
 
     await openSubagentTakeover(ctx, manager.view, snap.id, {
       badge: "by the way",
