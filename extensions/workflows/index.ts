@@ -40,10 +40,23 @@ import {
   keyHint,
   type SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
+import {
+  Container,
+  Markdown,
+  Spacer,
+  Text,
+  truncateToWidth,
+} from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
-import { formatActivityStatus } from "../shared/activity-status.ts";import { waitBounded } from "../shared/child-session.ts";
-import { loadSetupConfig } from "../shared/setup-config.ts";
+import { formatActivityStatus } from "../shared/activity-status.ts";
+import { waitBounded } from "../shared/child-session.ts";
+import { contextPercent } from "../shared/context-utilization.ts";
+import {
+  registerEditorLayer,
+  removeEditorLayer,
+} from "../shared/editor-layers.ts";
+import { fitNavigationSides } from "../shared/below-editor-navigation.ts";import { loadSetupConfig } from "../shared/setup-config.ts";
+import { SPINNER_INTERVAL_MS } from "../shared/spinner.ts";
 import {
   OPENPI_TOOL_SURFACE,
   patchOwnedTools,
@@ -54,8 +67,95 @@ import {
   roleModelForAgentType,
   selectSubagentModel,
 } from "../shared/agent-types.ts";
-import {  beginProcessReplayWorkspaceLease,
-  createReplayIdentity,
+import {
+  acceptanceInstruction,
+  acceptanceSchema,
+  applyAcceptance,
+  evaluateAcceptance,
+  parseAcceptanceContract,
+} from "./acceptance.ts";
+import {
+  createWorkflowPersistence,
+  loadJournal,
+  persistWorkflowJson,
+} from "./artifacts.ts";
+import { RunController } from "./controller.ts";
+import {
+  listPersistedRunIds,
+  readPersistedWorkflowDetails,
+  recoverStaleWorkflowDetails,
+  sessionWorkflowRunIds,
+  showWorkflowDashboard,
+} from "./dashboard.ts";
+import { createWorkflowHandoffRegistry } from "./handoff.ts";
+import {
+  classifyInterruptedInvocation,
+  createInvocationIdentity,
+  requestInvocation,
+  transitionInvocation,
+} from "./invocation-ledger.ts";
+import {
+  agentCallKey,
+  createReplayCache,
+  type JournalEntry,
+  type ReplayCache,
+} from "./journal.ts";
+import {
+  extractMeta,
+  prepareWorkflowScript,
+  type WorkflowMeta,
+} from "./meta.ts";
+import {
+  type AgentRecord,
+  agentContext,
+  aggregateUsage,
+  appendLog,
+  countStates,
+  createUsageReader,
+  emptyUsage,
+  formatElapsed,
+  formatUsage,
+  isWorkflowRunId,
+  phaseGroups,
+  refreshWorkflowGraph,
+  resolveWorkflowRunTarget,
+  resultJson,
+  sanitizeLine,
+  sanitizeWorkflowDisplayLine,
+  sanitizeWorkflowDisplayText,
+  stateGlyph,
+  statusColor,
+  statusGlyph,
+  statusWord,
+  type WorkflowDetails,
+} from "./model.ts";
+import {
+  WorkflowNavigationEditor,
+  type WorkflowStripEntry,
+  WorkflowStripState,
+  WorkflowStripWidget,
+} from "./navigation.ts";
+import {
+  normalizeWorkflowOperatorKey,
+  WorkflowOperatorRegistry,
+} from "./operator.ts";
+import {
+  buildBackgroundWorkflowFollowUp,
+  buildBackgroundWorkflowLaunchResult,
+  buildWorkflowAgentPrompt,
+  buildWorkflowResultMessage,
+  WORKFLOW_LIFECYCLE_PROMPT_SNIPPET,
+  WORKFLOW_PARAMETER_DESCRIPTIONS,
+  WORKFLOW_PROMPT_GUIDELINES,
+  WORKFLOW_PROMPT_SNIPPET,
+  WORKFLOW_STATUS_PARAMETER_DESCRIPTIONS,
+  WORKFLOW_STATUS_TOOL_DESCRIPTION,
+  WORKFLOW_STOP_PARAMETER_DESCRIPTIONS,
+  WORKFLOW_STOP_TOOL_DESCRIPTION,
+  WORKFLOW_TOOL_DESCRIPTION,
+} from "./prompt.ts";
+import {
+  beginProcessReplayWorkspaceLease,  createReplayIdentity,
   isReplaySafeAgentCall,
 } from "./replay-safety.ts";
 import {
@@ -74,6 +174,292 @@ import {
 
 const PREVIEW_LENGTH = 200;
 const EMIT_INTERVAL_MS = 120;
+
+/** Header of a workflow card: identity and phase on the left, metrics right. */
+function runHeader(
+  details: WorkflowDetails,
+  theme: Parameters<typeof statusGlyph>[1],
+  now: number,
+) {
+  const { done, failed } = countStates(details);
+  const settled = done + failed;
+  const elapsed = formatElapsed(details.startedAt, details.finishedAt);
+  // A just-launched run has no agents and a 0s clock; the metrics join in
+  // once there is something real to report.
+  const counts =
+    details.agents.length > 0
+      ? `${settled}/${details.agents.length} agents`
+      : undefined;
+  const metrics = [counts, counts || elapsed !== "0s" ? elapsed : undefined]
+    .filter(Boolean)
+    .join(" · ");
+  let left =
+    `${statusGlyph(details.status, theme, now)} ${theme.fg("toolTitle", theme.bold("workflow "))}` +
+    theme.fg(
+      "accent",
+      sanitizeWorkflowDisplayLine(details.name ?? details.runId),
+    );
+  if (details.status === "running" && details.currentPhase) {
+    left += theme.fg(
+      "muted",
+      ` · ${sanitizeWorkflowDisplayLine(details.currentPhase)}`,
+    );
+  }
+  // The glyph already carries the run state, so the status word only stays
+  // for terminal states.
+  let right = theme.fg("dim", metrics);
+  if (details.status !== "running") {
+    right +=
+      theme.fg("dim", `${metrics ? " · " : ""}`) +
+      theme.fg(statusColor(details.status), statusWord(details.status));
+  }
+  if (failed) right += theme.fg("error", ` · ${failed} failed`);
+  return { left, right };
+}
+
+/**
+ * Collapsed workflow card, rebuilt per repaint. Metrics right-align like the
+ * below-editor strip, and each agent row carries one number only: context
+ * occupancy says a running agent is alive, elapsed says what a settled one
+ * cost. A swarm shows the first few agents and summarizes the rest instead
+ * of flooding the chat.
+ */
+function buildCollapsedRows(
+  details: WorkflowDetails,
+  theme: Parameters<typeof statusGlyph>[1],
+  width: number,
+  now: number,
+  totals: string,
+) {
+  const header = runHeader(details, theme, now);
+  const rows = [fitNavigationSides(header.left, header.right, width)];
+  const collapsedAgents = details.agents.slice(0, 8);
+  for (const agent of collapsedAgents) {
+    const percent = contextPercent({
+      tokens: agent.usage.contextTokens,
+      contextWindow: agent.contextWindow,
+    });
+    const stat =
+      agent.state === "running"
+        ? percent === undefined
+          ? undefined
+          : `${percent}%`
+        : formatElapsed(agent.startedAt, agent.finishedAt);
+    const left = `  ${stateGlyph(agent.state, theme, now)} ${theme.fg(
+      "accent",
+      sanitizeWorkflowDisplayLine(agent.label),
+    )}`;
+    rows.push(
+      stat
+        ? fitNavigationSides(left, theme.fg("dim", stat), width)
+        : truncateToWidth(left, width, "…"),
+    );
+  }
+  const hiddenAgents = details.agents.length - collapsedAgents.length;
+  if (hiddenAgents > 0) {
+    rows.push(`  ${theme.fg("dim", `… ${hiddenAgents} more`)}`);
+  }
+  // Only the tail collapsed: the newest lines are the ones that say where
+  // the run is now.
+  for (const entry of (details.logs ?? []).slice(-3)) {
+    rows.push(
+      truncateToWidth(
+        `  ${theme.fg("muted", "›")} ${theme.fg(
+          "dim",
+          sanitizeWorkflowDisplayLine(entry.text),
+        )}`,
+        width,
+        "…",
+      ),
+    );
+  }
+  if (totals) rows.push(`  ${theme.fg("dim", `Total: ${totals}`)}`);
+  if (details.error) {
+    rows.push(
+      truncateToWidth(
+        `  ${theme.fg(
+          "error",
+          `Error: ${sanitizeWorkflowDisplayLine(details.error)}`,
+        )}`,
+        width,
+        "…",
+      ),
+    );
+  }
+  // Expanding only earns its hint when there is more to see.
+  if (
+    details.agents.length > 0 ||
+    (details.logs ?? []).length > 0 ||
+    details.description ||
+    details.result !== undefined ||
+    details.error
+  ) {
+    rows.push(
+      theme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`),
+    );
+  }
+  return rows;
+}
+
+function buildExpandedWorkflow(
+  details: WorkflowDetails,
+  theme: Parameters<typeof statusGlyph>[1],
+  now: number,
+  totals: string,
+) {
+  const header = runHeader(details, theme, now);
+  const container = new Container();
+  container.addChild(
+    new Text(
+      header.right ? `${header.left} ${header.right}` : header.left,
+      0,
+      0,
+    ),
+  );
+  if (details.description) {
+    container.addChild(
+      new Text(
+        theme.fg("dim", sanitizeWorkflowDisplayLine(details.description)),
+        0,
+        0,
+      ),
+    );
+  }
+
+  for (const group of phaseGroups(details)) {
+    container.addChild(new Spacer(1));
+    container.addChild(
+      new Text(
+        theme.fg(
+          "muted",
+          `─── ${sanitizeWorkflowDisplayLine(group.title)} ───`,
+        ),
+        0,
+        0,
+      ),
+    );
+    for (const agent of group.agents) {
+      const usage = formatUsage(agent.usage, agent.model);
+      const context = agentContext(agent);
+      let line = `${stateGlyph(agent.state, theme, now)} ${theme.fg(
+        "accent",
+        sanitizeWorkflowDisplayLine(agent.label),
+      )} ${theme.fg(
+        "dim",
+        [context, formatElapsed(agent.startedAt, agent.finishedAt)]
+          .filter(Boolean)
+          .join(" · "),
+      )}`;
+      if (usage)
+        line += ` ${theme.fg("dim", sanitizeWorkflowDisplayLine(usage))}`;
+      container.addChild(new Text(line, 0, 0));
+      if (agent.error) {
+        container.addChild(
+          new Text(
+            `  ${theme.fg("error", sanitizeWorkflowDisplayLine(agent.error))}`,
+            0,
+            0,
+          ),
+        );
+      } else if (agent.preview) {
+        const preview = sanitizeWorkflowDisplayText(
+          agent.preview,
+          PREVIEW_LENGTH,
+        )
+          .split("\n")
+          .slice(0, 2)
+          .join(" ");
+        container.addChild(new Text(`  ${theme.fg("dim", preview)}`, 0, 0));
+      }
+    }
+  }
+
+  if (details.logs && details.logs.length > 0) {
+    container.addChild(new Spacer(1));
+    container.addChild(new Text(theme.fg("muted", "─── log ───"), 0, 0));
+    if (details.logsDropped) {
+      container.addChild(
+        new Text(
+          theme.fg("dim", `(${details.logsDropped} earlier line(s) dropped)`),
+          0,
+          0,
+        ),
+      );
+    }
+    for (const entry of details.logs) {
+      container.addChild(
+        new Text(
+          `${theme.fg("muted", "›")} ${theme.fg(
+            "dim",
+            sanitizeWorkflowDisplayLine(entry.text),
+          )}`,
+          0,
+          0,
+        ),
+      );
+    }
+  }
+
+  if (details.error) {
+    container.addChild(new Spacer(1));
+    container.addChild(
+      new Text(
+        theme.fg(
+          "error",
+          `Error: ${sanitizeWorkflowDisplayLine(details.error)}`,
+        ),
+        0,
+        0,
+      ),
+    );
+  }
+
+  if (details.result !== undefined) {
+    container.addChild(new Spacer(1));
+    container.addChild(new Text(theme.fg("muted", "─── result ───"), 0, 0));
+    container.addChild(
+      new Markdown(
+        `\`\`\`json\n${resultJson(details.result)}\n\`\`\``,
+        0,
+        0,
+        getMarkdownTheme(),
+      ),
+    );
+  }
+
+  if (totals) {
+    container.addChild(new Spacer(1));
+    container.addChild(new Text(theme.fg("dim", `Total: ${totals}`), 0, 0));
+  }
+  return container;
+}
+
+interface WorkflowRenderState {
+  spinnerTimer?: ReturnType<typeof setInterval>;
+}
+
+function syncWorkflowSpinner(
+  state: WorkflowRenderState,
+  isRunning: () => boolean,
+  invalidate: () => void,
+) {
+  if (!isRunning()) {
+    if (state.spinnerTimer) clearInterval(state.spinnerTimer);
+    state.spinnerTimer = undefined;
+    return;
+  }
+  if (state.spinnerTimer) return;
+  const spinnerTimer = setInterval(() => {
+    if (state.spinnerTimer !== spinnerTimer) return;
+    if (!isRunning()) {
+      clearInterval(spinnerTimer);
+      state.spinnerTimer = undefined;
+    }
+    invalidate();
+  }, SPINNER_INTERVAL_MS);
+  state.spinnerTimer = spinnerTimer;
+  spinnerTimer.unref?.();
+}
 
 /**
  * Test-only injection seam for execute-level tests: production never sets it.
@@ -1602,14 +1988,14 @@ export default function workflows(pi: ExtensionAPI) {
       const description = (meta as WorkflowMeta).description;
       if (description) text += `\n  ${theme.fg("dim", description)}`;
       for (const phase of meta.phases.slice(0, 8)) {
-        text += `\n  ${theme.fg("dim", SQUARE)} ${theme.fg("accent", phase.title)}${
+        text += `\n  ${theme.fg("dim", "○")} ${theme.fg("accent", phase.title)}${
           phase.detail ? theme.fg("dim", ` — ${phase.detail}`) : ""
         }`;
       }
       return new Text(text, 0, 0);
     },
 
-    renderResult(result, { expanded }, theme) {
+    renderResult(result, { expanded, isPartial }, theme, context) {
       const details = result.details as WorkflowDetails | undefined;
       if (!details) {
         const first = result.content[0];
@@ -1619,189 +2005,40 @@ export default function workflows(pi: ExtensionAPI) {
           0,
         );
       }
+      const currentDetails = () =>
+        activeRuns.get(details.runId)?.details ??
+        settledRuns.get(details.runId) ??
+        details;
+      syncWorkflowSpinner(
+        context.state as WorkflowRenderState,
+        () =>
+          currentDetails().status === "running" &&
+          (isPartial || activeRuns.has(details.runId)),
+        context.invalidate,
+      );
 
-      const { done, failed } = countStates(details);
-      const settled = done + failed;
-      const elapsed = formatElapsed(details.startedAt, details.finishedAt);
-      let header =
-        `${theme.fg(statusColor(details.status), SQUARE)} ${theme.fg("toolTitle", theme.bold("workflow "))}` +
-        `${theme.fg(
-          "accent",
-          sanitizeWorkflowDisplayLine(details.name ?? details.runId),
-        )} ` +
-        theme.fg(
-          "dim",
-          `${settled}/${details.agents.length} agents · ${elapsed} · `,
-        ) +
-        theme.fg(statusColor(details.status), statusWord(details.status));
-      if (failed) header += theme.fg("error", ` · ${failed} failed`);
-      if (details.background) header += theme.fg("dim", " (background)");
-      if (details.status === "running" && details.currentPhase) {
-        header += theme.fg(
-          "muted",
-          ` · ${sanitizeWorkflowDisplayLine(details.currentPhase)}`,
-        );
-      }
-      const totals = formatUsage(aggregateUsage(details.agents));
-
-      if (!expanded) {
-        let text = header;
-        for (const agent of details.agents) {
-          const context = agentContext(agent);
-          text += `\n  ${stateSquare(agent.state, theme)} ${theme.fg(
-            "accent",
-            sanitizeWorkflowDisplayLine(agent.label),
-          )}${
-            agent.phase
-              ? theme.fg(
-                  "dim",
-                  ` (${sanitizeWorkflowDisplayLine(agent.phase)})`,
-                )
-              : ""
-          }${theme.fg(
-            "dim",
-            `${context ? ` · ${context}` : ""} · ${formatElapsed(agent.startedAt, agent.finishedAt)}`,
-          )}`;
-        }
-        // Only the tail collapsed: the newest lines are the ones that say
-        // where the run is now.
-        for (const entry of (details.logs ?? []).slice(-3)) {
-          text += `\n  ${theme.fg("muted", "›")} ${theme.fg(
-            "dim",
-            sanitizeWorkflowDisplayLine(entry.text),
-          )}`;
-        }
-        if (totals) text += `\n  ${theme.fg("dim", `Total: ${totals}`)}`;
-        if (details.error)
-          text += `\n  ${theme.fg(
-            "error",
-            `Error: ${sanitizeWorkflowDisplayLine(details.error)}`,
-          )}`;
-        text += `\n${theme.fg("muted", `(${keyHint("app.tools.expand", "to expand")})`)}`;
-        return new Text(text, 0, 0);
-      }
-
-      const container = new Container();
-      container.addChild(new Text(header, 0, 0));
-      if (details.description) {
-        container.addChild(
-          new Text(
-            theme.fg("dim", sanitizeWorkflowDisplayLine(details.description)),
-            0,
-            0,
-          ),
-        );
-      }
-
-      for (const group of phaseGroups(details)) {
-        container.addChild(new Spacer(1));
-        container.addChild(
-          new Text(
-            theme.fg(
-              "muted",
-              `─── ${sanitizeWorkflowDisplayLine(group.title)} ───`,
-            ),
-            0,
-            0,
-          ),
-        );
-        for (const agent of group.agents) {
-          const usage = formatUsage(agent.usage, agent.model);
-          const context = agentContext(agent);
-          let line = `${stateSquare(agent.state, theme)} ${theme.fg(
-            "accent",
-            sanitizeWorkflowDisplayLine(agent.label),
-          )} ${theme.fg(
-            "dim",
-            [context, formatElapsed(agent.startedAt, agent.finishedAt)]
-              .filter(Boolean)
-              .join(" · "),
-          )}`;
-          if (usage)
-            line += ` ${theme.fg("dim", sanitizeWorkflowDisplayLine(usage))}`;
-          container.addChild(new Text(line, 0, 0));
-          if (agent.error) {
-            container.addChild(
-              new Text(
-                `  ${theme.fg("error", sanitizeWorkflowDisplayLine(agent.error))}`,
-                0,
-                0,
-              ),
+      return {
+        render(width: number) {
+          const current = currentDetails();
+          const totals = formatUsage(aggregateUsage(current.agents));
+          if (!expanded) {
+            return buildCollapsedRows(
+              current,
+              theme,
+              width,
+              Date.now(),
+              totals,
             );
-          } else if (agent.preview) {
-            const preview = sanitizeWorkflowDisplayText(
-              agent.preview,
-              PREVIEW_LENGTH,
-            )
-              .split("\n")
-              .slice(0, 2)
-              .join(" ");
-            container.addChild(new Text(`  ${theme.fg("dim", preview)}`, 0, 0));
           }
-        }
-      }
-
-      if (details.logs && details.logs.length > 0) {
-        container.addChild(new Spacer(1));
-        container.addChild(new Text(theme.fg("muted", "─── log ───"), 0, 0));
-        if (details.logsDropped) {
-          container.addChild(
-            new Text(
-              theme.fg(
-                "dim",
-                `(${details.logsDropped} earlier line(s) dropped)`,
-              ),
-              0,
-              0,
-            ),
-          );
-        }
-        for (const entry of details.logs) {
-          container.addChild(
-            new Text(
-              `${theme.fg("muted", "›")} ${theme.fg(
-                "dim",
-                sanitizeWorkflowDisplayLine(entry.text),
-              )}`,
-              0,
-              0,
-            ),
-          );
-        }
-      }
-
-      if (details.error) {
-        container.addChild(new Spacer(1));
-        container.addChild(
-          new Text(
-            theme.fg(
-              "error",
-              `Error: ${sanitizeWorkflowDisplayLine(details.error)}`,
-            ),
-            0,
-            0,
-          ),
-        );
-      }
-
-      if (details.result !== undefined) {
-        container.addChild(new Spacer(1));
-        container.addChild(new Text(theme.fg("muted", "─── result ───"), 0, 0));
-        container.addChild(
-          new Markdown(
-            `\`\`\`json\n${resultJson(details.result)}\n\`\`\``,
-            0,
-            0,
-            getMarkdownTheme(),
-          ),
-        );
-      }
-
-      if (totals) {
-        container.addChild(new Spacer(1));
-        container.addChild(new Text(theme.fg("dim", `Total: ${totals}`), 0, 0));
-      }
-      return container;
+          return buildExpandedWorkflow(
+            current,
+            theme,
+            Date.now(),
+            totals,
+          ).render(width);
+        },
+        invalidate() {},
+      };
     },
   });
 
@@ -1941,17 +2178,10 @@ export default function workflows(pi: ExtensionAPI) {
               .join("") ?? "");
       const safeBody = sanitizeWorkflowDisplayText(body);
       if (!details) return new Text(safeBody, 0, 0);
-      const { done, failed } = countStates(details);
-      const settled = done + failed;
-      let header =
-        `${theme.fg(statusColor(details.status), SQUARE)} ${theme.fg("toolTitle", theme.bold("workflow "))}` +
-        `${theme.fg(
-          "accent",
-          sanitizeWorkflowDisplayLine(details.name ?? details.runId),
-        )} ` +
-        theme.fg("dim", `${settled}/${details.agents.length} agents · `) +
-        theme.fg(statusColor(details.status), statusWord(details.status));
-      if (failed) header += theme.fg("error", ` · ${failed} failed`);
+      const headerParts = runHeader(details, theme, Date.now());
+      const header = headerParts.right
+        ? `${headerParts.left} ${headerParts.right}`
+        : headerParts.left;
       if (expanded) return new Text(`${header}\n\n${safeBody}`, 0, 0);
       const preview = safeBody.split("\n").slice(0, 8).join("\n");
       return new Text(

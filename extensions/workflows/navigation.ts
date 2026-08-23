@@ -6,9 +6,7 @@ import {
   fitNavigationSides,
   renderNavigationMetrics,
 } from "../shared/below-editor-navigation.ts";
-import { requestWidgetRepaint } from "../shared/ui-screen.ts";
-import { spinnerFrame } from "../shared/spinner.ts";
-import { sanitizeTerminalText } from "../shared/terminal-text.ts";
+import { SPINNER_INTERVAL_MS, spinnerFrame } from "../shared/spinner.ts";import { sanitizeTerminalText } from "../shared/terminal-text.ts";
 import {
   aggregateUsage,
   countStates,
@@ -64,8 +62,10 @@ export class WorkflowStripWidget {
     this.theme = theme;
     this.strip = strip;
     this.getEntry = getEntry;
-    this.timer = setInterval(() => requestWidgetRepaint(this.tui), 500);
-    this.timer.unref?.();
+    this.timer = setInterval(
+      () => this.tui.requestRender(),
+      SPINNER_INTERVAL_MS,
+    );    this.timer.unref?.();
   }
 
   dispose() {
@@ -103,8 +103,7 @@ export class WorkflowStripWidget {
       [
         running > 0 ? `${running} running` : undefined,
         settled > 0 ? `${settled} done` : undefined,
-        failed > 0 ? `${failed} failed` : undefined,
-        formatElapsed(details.startedAt, details.finishedAt),
+        failed > 0 ? `${failed} failed` : undefined,        formatElapsed(details.startedAt, details.finishedAt),
         tokenCount > 0 ? `${formatTokens(tokenCount)} tokens` : undefined,
       ],
       this.strip.focused ? "enter open · ↑ back" : "↓ to manage",

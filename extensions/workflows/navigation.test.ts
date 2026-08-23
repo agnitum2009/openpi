@@ -12,6 +12,7 @@ import {
   WorkflowStripWidget,
   workflowStripInput,
 } from "./navigation.ts";
+import { SPINNER_INTERVAL_MS } from "../shared/spinner.ts";
 import type { Theme, WorkflowDetails } from "./model.ts";
 
 test("Down focuses an available workflow only from an empty editor", () => {
@@ -199,6 +200,29 @@ test("the workflow HUD stays bounded and exposes its navigation hint", () => {
     assert.equal(focused.length, 2);
     for (const line of focused) assert.ok(visibleWidth(line) <= 56);
     assert.match(focused[0]!, /enter open/);
+  } finally {
+    widget.dispose();
+  }
+});
+
+test("workflow strip repaints on the shared spinner cadence", (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  let renders = 0;
+  const widget = new WorkflowStripWidget(
+    {
+      requestRender() {
+        renders += 1;
+      },
+    } as unknown as TUI,
+    theme,
+    new WorkflowStripState(),
+    () => ({ runId: "wf_test", details: workflow() }),
+  );
+  try {
+    t.mock.timers.tick(SPINNER_INTERVAL_MS - 1);
+    assert.equal(renders, 0);
+    t.mock.timers.tick(1);
+    assert.equal(renders, 1);
   } finally {
     widget.dispose();
   }
