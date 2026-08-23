@@ -186,7 +186,7 @@ subagent_spawn({
 
 每个 Subagent 都是新的进程内 Pi SDK Session：
 
-- 默认继承父会话的 Provider、模型与 Thinking Level；
+- 默认继承父会话的 Provider 与模型；用户可明确指定 Thinking Level，否则模型根据角色建议、任务难度与目标模型实际支持的档位选择；
 - 继承普通 child-safe 工具、Skills、项目说明与 Trust 决策；
 - 最多 4 个模型发起的 Subagent 并发运行，结束后自动回传；
 - 可 `check`、`wait`、`cancel`，也可用 `subagent_send` 继续同一子会话；
@@ -194,12 +194,14 @@ subagent_spawn({
 
 内置角色由 Harness 强制工具边界，不靠 Prompt 自律：
 
-| `agent_type`  | 适合             | 默认 effort | 强制能力                      |
-| ------------- | ---------------- | ----------- | ----------------------------- |
-| `explorer`    | 代码追踪与探索   | high        | 只读发现工具                  |
-| `implementer` | 聚焦实现         | high        | read / bash / edit / write 等 |
-| `reviewer`    | 正确性与回归审查 | medium      | 只读发现工具                  |
-| `advisor`     | 深度技术建议     | xhigh       | 只读发现工具                  |
+| `agent_type`  | 适合             | 相对 effort 建议    | 强制能力                      |
+| ------------- | ---------------- | ------------------- | ----------------------------- |
+| `explorer`    | 代码追踪与探索   | 中等，难题可提高    | 只读发现工具                  |
+| `implementer` | 聚焦实现         | 中高，按范围与风险调整 | read / bash / edit / write 等 |
+| `reviewer`    | 正确性与回归审查 | 较高                | 只读发现工具                  |
+| `advisor`     | 深度技术建议     | 较高                | 只读发现工具                  |
+
+上述只是模型的相对选择提示，不会为内置角色写死具体档位。用户明确指定的 `reasoning_effort` 始终优先；否则模型结合任务难度，从目标模型实际支持的档位中选择。
 
 角色可由全局 `~/.pi/agent/agents/*.md` 或受信任项目 `.pi/agents/*.md` 覆盖。模型优先级是：显式调用 > Agent Type 文件 > `/openpi-setup` 角色模型 > 父模型继承。更高优先级定义损坏时会阻断 fallback，而不是悄悄退回更宽松的能力。
 

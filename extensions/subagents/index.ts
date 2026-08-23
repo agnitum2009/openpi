@@ -25,7 +25,6 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { StringEnum } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -82,10 +81,9 @@ import {
 } from "./src/manager.ts";
 import {
   buildSubagentResultMessage,
-  createAgentTypeParameterSchema,
   buildSubagentSendResult,
   buildSubagentSpawnResult,
-  buildSubagentSpawnToolDescription,
+  createSubagentSpawnToolSurface,
   SUBAGENT_CANCEL_PARAMETER_DESCRIPTIONS,
   SUBAGENT_CANCEL_TOOL_DESCRIPTION,
   SUBAGENT_CHECK_PARAMETER_DESCRIPTIONS,
@@ -93,10 +91,8 @@ import {
   SUBAGENT_LIST_TOOL_DESCRIPTION,
   SUBAGENT_SEND_PARAMETER_DESCRIPTIONS,
   SUBAGENT_SEND_TOOL_DESCRIPTION,
-  SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS,
   SUBAGENT_SPAWN_PROMPT_GUIDELINES,
   SUBAGENT_SPAWN_PROMPT_SNIPPET,
-  SUBAGENT_SPAWN_TOOL_DESCRIPTION,
   SUBAGENT_WAIT_PARAMETER_DESCRIPTIONS,
   SUBAGENT_WAIT_TOOL_DESCRIPTION,
 } from "./src/prompt.ts";
@@ -665,57 +661,22 @@ export default function (pi: ExtensionAPI) {
     agentTypes = loaded.agentTypes;
     agentTypeDiagnostics = loaded.diagnostics;
     agentTypeList = [...agentTypes.values()];
-    subagentSpawnTool.description =
-      buildSubagentSpawnToolDescription(agentTypeList);
-    subagentSpawnTool.parameters = createSubagentSpawnParameters();
+    const surface = createSubagentSpawnToolSurface(agentTypeList);
+    subagentSpawnTool.description = surface.description;
+    subagentSpawnTool.parameters = surface.parameters;
     registerSubagentSpawnTool();
   };
 
   // --- Tools -------------------------------------------------------------
 
-  const createSubagentSpawnParameters = () =>
-    Type.Object({
-      agent_type: createAgentTypeParameterSchema(agentTypeList),
-      prompt: Type.String({
-        description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.prompt,
-      }),
-      name: Type.String({
-        description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.name,
-      }),
-      harness: Type.Optional(
-        StringEnum(BACKEND_NAMES, {
-          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.harness,
-        }),
-      ),
-      working_dir: Type.Optional(
-        Type.String({
-          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.workingDir,
-        }),
-      ),
-      isolation: Type.Optional(
-        StringEnum(["worktree"] as const, {
-          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.isolation,
-        }),
-      ),
-      model: Type.Optional(
-        Type.String({
-          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.model,
-        }),
-      ),
-      reasoning_effort: Type.Optional(
-        StringEnum(REASONING_EFFORTS, {
-          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.reasoningEffort,
-        }),
-      ),
-    });
+  const initialSpawnSurface = createSubagentSpawnToolSurface(agentTypeList);
 
   const subagentSpawnTool = defineTool({
     name: "subagent_spawn",
     label: "Spawn Subagent",
-    description: buildSubagentSpawnToolDescription(agentTypeList),
+    ...initialSpawnSurface,
     promptSnippet: SUBAGENT_SPAWN_PROMPT_SNIPPET,
     promptGuidelines: SUBAGENT_SPAWN_PROMPT_GUIDELINES,
-    parameters: createSubagentSpawnParameters(),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       // Only one backend exists; harness is optional and defaults to it.
       const harness = params.harness ?? BACKEND_NAMES[0];

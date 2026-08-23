@@ -8,15 +8,44 @@ import { MAX_RUNNING } from "./src/manager.ts";
 import {
   buildAgentTypeParameterDescription,
   buildSubagentSpawnResult,
+  createSubagentSpawnToolSurface,
   createAgentTypeParameterSchema,
+  SUBAGENT_SCHEMA_BUDGETS,
   SUBAGENT_SPAWN_PROMPT_GUIDELINES,
   SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS,
   SUBAGENT_SPAWN_TOOL_DESCRIPTION,
   SUBAGENT_WAIT_TOOL_DESCRIPTION,
 } from "./src/prompt.ts";
-import { BUILT_IN_AGENT_TYPES, type AgentType } from "../shared/agent-types.ts";
+import {
+  AGENT_TYPE_LIMITS,
+  BUILT_IN_AGENT_TYPES,
+  type AgentType,
+} from "../shared/agent-types.ts";
+function spawnSurfaceBytes(agentTypes: readonly AgentType[]) {
+  const surface = createSubagentSpawnToolSurface(agentTypes);
+  return Buffer.byteLength(
+    JSON.stringify({ name: "subagent_spawn", ...surface }),
+    "utf8",
+  );
+}
 
-test("the generated agent_type schema exposes each effective capability and effort default", () => {
+function maximumRoster(): AgentType[] {
+  return Array.from({ length: AGENT_TYPE_LIMITS.files }, (_, index) => {
+    const prefix = `role-${index}-`;
+    return {
+      name: prefix + "x".repeat(AGENT_TYPE_LIMITS.nameChars - prefix.length),
+      description: "界".repeat(AGENT_TYPE_LIMITS.descriptionChars),
+      tools: Array.from(
+        { length: AGENT_TYPE_LIMITS.tools },
+        (__, toolIndex) => `custom-tool-${index}-${toolIndex}`,
+      ),
+      reasoningEffort: "high",
+      source: `test:${index}`,
+    };
+  });
+}
+
+test("the generated agent_type schema exposes a compact, enforced role index", () => {
   const parentOnlyType: AgentType = {
     name: "parent-only",
     description: "Attempts parent orchestration.",
@@ -43,20 +72,97 @@ test("the generated agent_type schema exposes each effective capability and effo
     ...BUILT_IN_AGENT_TYPES,
     parentOnlyType,
   ]);
-  assert.match(description, /explorer.*default reasoning_effort: high/);
-  assert.match(description, /reviewer.*default reasoning_effort: medium/);
-  assert.match(description, /advisor.*default reasoning_effort: xhigh/);
-  assert.match(description, /parent-only.*reasoning_effort: inherits parent/);
-  assert.match(description, /parent-only.*only: read/);
-  assert.doesNotMatch(description, /only: read, subagent_spawn/);
+  assert.match(description, /explorer.*moderate reasoning/);
+  assert.match(description, /implementer.*medium-high reasoning/);
+  assert.match(description, /reviewer.*high reasoning/);
+  assert.match(description, /advisor.*high reasoning/);
+  assert.doesNotMatch(description, /default reasoning_effort/);
+  assert.match(description, /parent-only.*read-only/);
+  assert.doesNotMatch(description, /only: read/);
+  assert.doesNotMatch(description, /subagent_spawn/);
+  assert.doesNotMatch(description, /precedence/i);
+});
+
+test("reasoning guidance prioritizes the user and task difficulty without fixing a built-in level", () => {
   assert.match(
-    description,
-    /explicit spawn model > selected type file model > configured built-in role model > parent model/,
+    SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.reasoningEffort,
+    /user's requested level/i,
   );
   assert.match(
-    description,
-    /explicit spawn reasoning_effort > selected type default > parent reasoning effort/,
+    SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.reasoningEffort,
+    /task difficulty/i,
   );
+  assert.match(
+    SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.reasoningEffort,
+    /supported by the resolved child model/i,
+  );
+});
+
+test("an explicit user-selected reasoning level remains available", () => {
+  const schema =
+    createSubagentSpawnToolSurface(BUILT_IN_AGENT_TYPES).parameters;
+  const task = {
+    agent_type: "reviewer",
+    prompt: "Review the change.",
+    name: "review",
+  };
+
+  assert.equal(Value.Check(schema, { ...task, reasoning_effort: "max" }), true);
+  assert.equal(
+    Value.Check(schema, { ...task, reasoning_effort: "unsupported" }),
+    false,
+  );
+});
+
+test("the default spawn surface stays within its resident budget", () => {
+  assert.ok(
+    spawnSurfaceBytes(BUILT_IN_AGENT_TYPES) <=
+      SUBAGENT_SCHEMA_BUDGETS.defaultSpawnSurfaceBytes,
+  );
+});
+
+test("the maximum legal roster keeps every enum value while bounding summaries", () => {
+  const roster = maximumRoster();
+  const schema = createAgentTypeParameterSchema(roster);
+  const description = buildAgentTypeParameterDescription(roster);
+
+  for (const agentType of roster) {
+    assert.equal(Value.Check(schema, agentType.name), true, agentType.name);
+  }
+  assert.match(description, /presets omitted/i);
+  assert.doesNotMatch(description, /custom-tool-/);
+  assert.ok(
+    Buffer.byteLength(description, "utf8") <=
+      SUBAGENT_SCHEMA_BUDGETS.roleDirectoryBytes,
+  );
+  assert.ok(
+    spawnSurfaceBytes(roster) <=
+      SUBAGENT_SCHEMA_BUDGETS.maximumSpawnSurfaceBytes,
+  );
+});
+
+test("role summaries are deterministic and truncate UTF-8 without splitting it", () => {
+  const long: AgentType = {
+    name: "long-purpose",
+    description: "界".repeat(AGENT_TYPE_LIMITS.descriptionChars),
+    tools: ["read"],
+    reasoningEffort: "high",
+    source: "test",
+  };
+  const peer: AgentType = {
+    name: "alpha",
+    description: "Alpha role",
+    source: "test",
+  };
+  const forward = createSubagentSpawnToolSurface([long, peer]);
+  const reverse = createSubagentSpawnToolSurface([peer, long]);
+  const description = (
+    forward.parameters.properties.agent_type as { description?: string }
+  ).description;
+
+  assert.deepEqual(forward, reverse);
+  assert.match(description ?? "", /界…/u);
+  assert.doesNotMatch(description ?? "", /�/u);
 });
 
 test("the spawn description derives its concurrency cap from the manager", () => {

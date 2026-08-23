@@ -3,54 +3,126 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { effectiveChildToolAllowlist } from "../../shared/child-session.ts";
-import type { AgentType } from "../../shared/agent-types.ts";
-import { MAX_RUNNING } from "./manager.ts";
+import { SUBAGENT_ROLE_NAMES } from "../../shared/subagent-roles.ts";
+import { type AgentType, READ_ONLY_AGENT_TOOLS } from "../../shared/agent-types.ts";
+import { BACKEND_NAMES, REASONING_EFFORTS } from "./domain.ts";import { MAX_RUNNING } from "./manager.ts";
+
+export const SUBAGENT_SCHEMA_BUDGETS = Object.freeze({
+  rolePurposeBytes: 240,
+  roleDirectoryBytes: 4 * 1024,
+  defaultSpawnSurfaceBytes: 2.5 * 1024,
+  maximumSpawnSurfaceBytes: 16 * 1024,
+});
 
 /** Describes subagent_spawn, including the fixed concurrency cap. */
 export const SUBAGENT_SPAWN_TOOL_DESCRIPTION =
-  "Spawn a background subagent: a fully autonomous, headless pi session with its own context window, this environment's tools and config, and normal host permissions. Fire-and-forget: this returns immediately with an id, and the subagent's final output is automatically queued back to you as a message when it settles. In an interactive session, keep working or end your turn so the user remains able to interact; do not block merely because a later step depends on the result. Children cannot orchestrate more agents/workflows or ask the user, and cannot see this conversation, so the prompt must be self-contained. Only use trusted working directories. " +
+  "Spawn a background in-process Pi subagent with its own context, child-safe tools, and normal host permissions. Returns immediately; its final result is delivered automatically. The child cannot see this conversation, ask the user, or orchestrate agents/workflows. Use only trusted working directories. " +
   `Max ${MAX_RUNNING} subagents can be running at once.`;
 
-/**
- * Appends the configured agent types, if any. They are a runtime resource, so
- * the roster has to be baked into the description at registration time.
- */
-export function buildSubagentSpawnToolDescription(
-  agentTypes: readonly AgentType[],
-) {
-  if (agentTypes.length === 0) return SUBAGENT_SPAWN_TOOL_DESCRIPTION;
-  return `${SUBAGENT_SPAWN_TOOL_DESCRIPTION} This environment also defines agent types (see agent_type): named presets that fix a child's system prompt, and often restrict it to a subset of tools. Prefer one when it matches the task — a type's tool restriction is enforced, not advisory.`;
+/** UTF-8 bounded, whitespace-normalized text for the parent-facing roster. */
+function boundedPurpose(description: string) {
+  const normalized = description.trim().replace(/\s+/gu, " ");
+  const limit = SUBAGENT_SCHEMA_BUDGETS.rolePurposeBytes;
+  if (Buffer.byteLength(normalized, "utf8") <= limit) return normalized;
+  const suffix = "…";
+  let used = Buffer.byteLength(suffix, "utf8");
+  let output = "";
+  for (const character of normalized) {
+    const bytes = Buffer.byteLength(character, "utf8");
+    if (used + bytes > limit) break;
+    output += character;
+    used += bytes;
+  }
+  return output.trimEnd() + suffix;
 }
 
-/** Lists each agent type's enforced capabilities and reasoning default. */
+function compareNames(left: string, right: string) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Built-ins stay familiar; project/global additions are stable by name. */
+function orderedAgentTypes(agentTypes: readonly AgentType[]) {
+  const builtInOrder = new Map<string, number>(
+    SUBAGENT_ROLE_NAMES.map((name, index) => [name, index]),
+  );
+  return [...agentTypes].sort((left, right) => {
+    const leftIndex = builtInOrder.get(left.name);
+    const rightIndex = builtInOrder.get(right.name);
+    if (leftIndex !== undefined || rightIndex !== undefined) {
+      if (leftIndex === undefined) return 1;
+      if (rightIndex === undefined) return -1;
+      return leftIndex - rightIndex;
+    }
+    return compareNames(left.name, right.name);
+  });
+}
+
+function capabilityClass(agentType: AgentType) {
+  if (agentType.tools === undefined) return "inherited-tools";
+  const tools = effectiveChildToolAllowlist(agentType.tools) ?? [];
+  if (tools.length === 0) return "no-tools";
+  if (tools.every((tool) => READ_ONLY_AGENT_TOOLS.includes(tool))) {
+    return "read-only";
+  }
+  if (
+    tools.some((tool) => tool === "bash" || tool === "edit" || tool === "write")
+  ) {
+    return "workspace-write";
+  }
+  // Third-party child-safe tools may still have side effects, so only claim
+  // the enforceable fact: this preset has a restricted tool set.
+  return "restricted";
+}
+
+function agentTypeSummary(agentType: AgentType) {
+  const effort = agentType.reasoningEffort
+    ? ` [default reasoning_effort: ${agentType.reasoningEffort}]`
+    : "";
+  return `"${agentType.name}" — ${boundedPurpose(agentType.description)} [${capabilityClass(agentType)}]${effort}`;
+}
+
+/** A deterministic, bounded selection index; execution details stay in Skill. */
 export function buildAgentTypeParameterDescription(
   agentTypes: readonly AgentType[],
 ) {
-  const entries = agentTypes.map((agentType) => {
-    const tools = agentType.tools
-      ? (() => {
-          const effectiveTools = effectiveChildToolAllowlist(agentType.tools);
-          return effectiveTools?.length
-            ? ` [only: ${effectiveTools.join(", ")}]`
-            : " [only: no child-safe tools]";
-        })()
-      : "";
-    const effort = agentType.reasoningEffort
-      ? ` [default reasoning_effort: ${agentType.reasoningEffort}]`
-      : " [reasoning_effort: inherits parent]";
-    return `"${agentType.name}" — ${agentType.description}${tools}${effort}`;
-  });
-  return `Optional agent type: a preset that gives the child a specialized system prompt and, when listed, restricts it to exactly those child-safe tools. Omit for a general-purpose subagent with the normal tool set. Available: ${entries.join("; ")}. Model precedence: explicit spawn model > selected type file model > configured built-in role model > parent model. Reasoning precedence: explicit spawn reasoning_effort > selected type default > parent reasoning effort.`;
+  const ordered = orderedAgentTypes(agentTypes);
+  const intro =
+    "Optional named preset for the child prompt and capability boundary. Omit for a general-purpose child. Available: ";
+  const outro =
+    " Preset restrictions are enforced; read the Subagents Skill or role file for full details.";
+  const entries: string[] = [];
+  for (const agentType of ordered) {
+    const summary = agentTypeSummary(agentType);
+    const next = [...entries, summary];
+    const omitted = ordered.length - next.length;
+    const omission = omitted
+      ? `; ${omitted} presets omitted from this summary; their exact enum names remain valid.`
+      : ".";
+    const candidate = `${intro}${next.join("; ")}${omission}${outro}`;
+    if (
+      Buffer.byteLength(candidate, "utf8") >
+      SUBAGENT_SCHEMA_BUDGETS.roleDirectoryBytes
+    ) {
+      break;
+    }
+    entries.push(summary);
+  }
+  const omitted = ordered.length - entries.length;
+  const omission = omitted
+    ? `; ${omitted} presets omitted from this summary; their exact enum names remain valid.`
+    : ".";
+  return `${intro}${entries.join("; ")}${omission}${outro}`;
 }
 
 /** Generated schema for the dynamic agent-type roster. */
 export function createAgentTypeParameterSchema(
   agentTypes: readonly AgentType[],
 ) {
+  const ordered = orderedAgentTypes(agentTypes);
   return Type.Optional(
     StringEnum(
-      agentTypes.map((agentType) => agentType.name) as [string, ...string[]],
-      { description: buildAgentTypeParameterDescription(agentTypes) },
+      ordered.map((agentType) => agentType.name) as [string, ...string[]],
+      { description: buildAgentTypeParameterDescription(ordered) },
     ),
   );
 }
@@ -61,26 +133,67 @@ export const SUBAGENT_SPAWN_PROMPT_SNIPPET =
 
 /** Guides the parent model to delegate standalone tasks and avoid unnecessary blocking waits. */
 export const SUBAGENT_SPAWN_PROMPT_GUIDELINES = [
-  "Reserve subagent_spawn for substantial, self-contained work; give it a complete, standalone prompt. For a single lookup or edit you can do inline, just do it — each subagent spends a fresh context window and cannot see this conversation.",
-  "After subagent_spawn, keep working on independent work. If none remains in an interactive session, briefly tell the user the subagent is running in the background and end your turn; its result arrives automatically and you are re-invoked when it settles. Do not poll with subagent_check. Do not call subagent_wait merely because your next step depends on the result or because you have nothing else to do. Block only when the user explicitly asks you to keep the current response open for these results, or when a non-interactive automation must return them in the same invocation. Never answer from a guessed result before it arrives.",
+  "Delegate substantial independent work; do a single lookup or edit inline.",
+  "After spawning, continue independent work. In an interactive session, end your turn when none remains; automatic delivery will re-invoke you. Do not call subagent_wait merely because the next step depends on the result; use it only when the user explicitly asks to keep the response open, or the same non-interactive invocation must return the result. Never poll or guess the result.",
 ];
 
 /** Model-facing schema descriptions for subagent_spawn task and execution options. */
 export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
   prompt:
     "Task prompt for the subagent. Must be self-contained: include all needed context, file paths, and what to report back.",
-  name: "Short human-readable name for this subagent, shown in listings and the UI",
-  harness:
-    'Optional. The only harness is "pi" (an in-process Pi session that inherits this environment), which is the default; you can omit this.',
+  name: "Short human-readable name shown in listings and the UI",
+  harness: 'Optional; "pi" is the only harness and the default.',
   workingDir:
-    "Trusted working directory for the autonomous child (default: current working directory)",
+    "Trusted child working directory; defaults to the current directory",
   isolation:
-    'Set to "worktree" for concurrent writers and tell the child to commit. Requires Git and a clean checkout. Read the subagents Skill for lifecycle, merge location, and costs.',
+    'Use "worktree" for concurrent writers and tell the child to commit. See the Subagents Skill for lifecycle details.',
   model:
-    'Optional model override as "provider/model-id" (or bare id). Never guess a model name.',
-  reasoningEffort:
-    "Optional thinking level for the child. Precedence: explicit spawn reasoning_effort > selected type default > parent reasoning effort.",
+    'Optional "provider/model-id" or current-provider model override. Omit to use the preset, configured role, or parent default. Never guess a model name.',  reasoningEffort:
+    "Optional child thinking level. Honor the user's requested level. Otherwise choose a level supported by the resolved child model based on the selected role and task difficulty. An explicit value overrides a role default.",
 };
+
+/** The exact name/description/wire-schema source used by registration/tests. */
+export function createSubagentSpawnToolSurface(
+  agentTypes: readonly AgentType[],
+) {
+  return {
+    description: SUBAGENT_SPAWN_TOOL_DESCRIPTION,
+    parameters: Type.Object({
+      agent_type: createAgentTypeParameterSchema(agentTypes),
+      prompt: Type.String({
+        description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.prompt,
+      }),
+      name: Type.String({
+        description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.name,
+      }),
+      harness: Type.Optional(
+        StringEnum(BACKEND_NAMES, {
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.harness,
+        }),
+      ),
+      working_dir: Type.Optional(
+        Type.String({
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.workingDir,
+        }),
+      ),
+      isolation: Type.Optional(
+        StringEnum(["worktree"] as const, {
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.isolation,
+        }),
+      ),
+      model: Type.Optional(
+        Type.String({
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.model,
+        }),
+      ),
+      reasoning_effort: Type.Optional(
+        StringEnum(REASONING_EFFORTS, {
+          description: SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS.reasoningEffort,
+        }),
+      ),
+    }),
+  };
+}
 
 /** Builds the subagent_spawn result that tells the parent model how to continue or inspect the child. */
 export function buildSubagentSpawnResult(options: {

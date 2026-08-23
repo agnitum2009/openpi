@@ -69,7 +69,7 @@ async function seed(
   return { agentDir, cwd };
 }
 
-test("built-in roles have exact capability boundaries and no model defaults", () => {
+test("built-in roles have exact capability boundaries and no fixed model or effort defaults", () => {
   assert.deepEqual(
     BUILT_IN_AGENT_TYPES.map((role) => ({
       name: role.name,
@@ -91,7 +91,7 @@ test("built-in roles have exact capability boundaries and no model defaults", ()
           "git_diff",
           "git_log",
         ],
-        effort: "high",
+        effort: undefined,
         model: undefined,
       },
       {
@@ -110,7 +110,7 @@ test("built-in roles have exact capability boundaries and no model defaults", ()
           "git_diff",
           "git_log",
         ],
-        effort: "high",
+        effort: undefined,
         model: undefined,
       },
       {
@@ -126,7 +126,7 @@ test("built-in roles have exact capability boundaries and no model defaults", ()
           "git_diff",
           "git_log",
         ],
-        effort: "medium",
+        effort: undefined,
         model: undefined,
       },
       {
@@ -142,13 +142,27 @@ test("built-in roles have exact capability boundaries and no model defaults", ()
           "git_diff",
           "git_log",
         ],
-        effort: "xhigh",
+        effort: undefined,
         model: undefined,
       },
     ],
   );
-  assert.match(BUILT_IN_AGENT_TYPES[0]?.description ?? "", /xhigh/);
-  assert.match(BUILT_IN_AGENT_TYPES[0]?.description ?? "", /max only/);
+  assert.match(
+    BUILT_IN_AGENT_TYPES[0]?.description ?? "",
+    /moderate reasoning/,
+  );
+  assert.match(
+    BUILT_IN_AGENT_TYPES[1]?.description ?? "",
+    /medium-high reasoning/,
+  );
+  assert.match(BUILT_IN_AGENT_TYPES[2]?.description ?? "", /high reasoning/);
+  assert.match(BUILT_IN_AGENT_TYPES[3]?.description ?? "", /high reasoning/);
+  assert.ok(
+    BUILT_IN_AGENT_TYPES.every(
+      (role) =>
+        role.description.includes("task") || role.description.includes("tasks"),
+    ),
+  );
 });
 
 test("a valid agent type parses into prompt, tools, model, and effort", () => {

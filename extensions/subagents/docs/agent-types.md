@@ -1,8 +1,8 @@
 # Agent types
 
 An agent type is a reusable child-agent definition shared by
-`subagent_spawn` and Workflow `agent()`: a named preset that fixes a child's
-system prompt, its model and thinking level, and — the point of the feature —
+`subagent_spawn` and Workflow `agent()`: a named preset that can set a child's
+system prompt, model, and thinking level, and — the point of the feature —
 **which tools it may use at all**. Four provider-free built-in roles are always
 available: `explorer`, `implementer`, `reviewer`, and `advisor`.
 
@@ -48,14 +48,17 @@ All built-ins omit a model, so they inherit the parent model unless configured
 through `/openpi-setup`. Their complete definitions can be replaced by a custom
 file with the same name.
 
-| Role          | Tools                                     | Effort   | Purpose                                                                                                                                                                                                                                                                                                   |
-| ------------- | ----------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `explorer`    | `read grep find ls fd rg git_show git_diff git_log`                 | `high`   | Read-only codebase tracing. Use `high` for routine, local, direct tracing; `xhigh` for interacting state transitions, concurrency or trust boundaries, or subtle multi-path lifecycle/control-flow; `max` only for exceptionally difficult broad unfamiliar architecture with unresolved competing flows. |
-| `implementer` | `read bash edit write grep find ls fd rg git_show git_diff git_log` | `high`   | Focused implementation and relevant checks.                                                                                                                                                                                                                                                               |
-| `reviewer`    | `read grep find ls fd rg git_show git_diff git_log`                 | `medium` | Read-only correctness, safety, and regression review.                                                                                                                                                                                                                                                     |
-| `advisor`     | `read grep find ls fd rg git_show git_diff git_log`                 | `xhigh`  | Deep read-only analysis and technical advice.                                                                                                                                                                                                                                                             |
+| Role          | Tools                                                               | Relative effort guidance | Purpose                                                |
+| ------------- | ------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------ |
+| `explorer`    | `read grep find ls fd rg git_show git_diff git_log`                 | Moderate                 | Read-only codebase tracing; increase for harder tasks. |
+| `implementer` | `read bash edit write grep find ls fd rg git_show git_diff git_log` | Medium-high              | Focused implementation; adjust for scope and risk.     |
+| `reviewer`    | `read grep find ls fd rg git_show git_diff git_log`                 | High                     | Read-only correctness, safety, and regression review.  |
+| `advisor`     | `read grep find ls fd rg git_show git_diff git_log`                 | High                     | Deep read-only analysis and technical advice.          |
 
-Built-ins have concise role prompts and no provider or model names. Their tool
+These are relative selection hints, not fixed Pi thinking levels. Built-ins set
+no model or reasoning-effort default. An explicit user requirement takes
+priority; otherwise the parent model chooses from levels supported by the
+resolved child model according to the role and task difficulty. Their tool
 allowlists still intersect with plan mode and the child denylist.
 
 ## Discovery
