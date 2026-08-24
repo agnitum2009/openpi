@@ -310,7 +310,8 @@ const makeManager = (config: SubagentManagerConfig = {}) =>
         .sort(
           (a, b) =>
             (a.snapshot.settledAt ?? a.snapshot.createdAt) -
-            (b.snapshot.settledAt ?? b.snapshot.createdAt),        );
+            (b.snapshot.settledAt ?? b.snapshot.createdAt),
+        );
       for (const entry of candidates) {
         if (entries.size <= MAX_TRACKED) break;
         entries.delete(entry.snapshot.id);
@@ -385,7 +386,8 @@ const makeManager = (config: SubagentManagerConfig = {}) =>
 
     /** Settle a run whose provider never emitted a first assistant response. */
     const watchdogExpired = (entry: Entry) => {
-      entry.watchdogTimer = undefined;      if (!isBusy(entry)) return;
+      entry.watchdogTimer = undefined;
+      if (!isBusy(entry)) return;
       const model = entry.snapshot.meta.modelLabel;
       settle(entry, {
         _tag: "Failed",
@@ -496,9 +498,7 @@ const makeManager = (config: SubagentManagerConfig = {}) =>
           s.liveTools = [...entry.liveToolMap.values()];
           // Failure streak for the visibility layer: consecutive failed tools
           // reset on any success (or when the run settles) (local extension).
-          s.consecutiveFailures = event.isError
-            ? s.consecutiveFailures + 1
-            : 0;
+          s.consecutiveFailures = event.isError ? s.consecutiveFailures + 1 : 0;
           appendTranscript(s, {
             kind: "toolResult",
             toolId: event.toolId,
@@ -592,6 +592,8 @@ const makeManager = (config: SubagentManagerConfig = {}) =>
               queued: [],
               finalText: "",
               turns: 0,
+              lastActivityAt: Date.now(),
+              consecutiveFailures: 0,
             },
             session,
             scope,

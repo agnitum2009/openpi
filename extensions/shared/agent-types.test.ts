@@ -22,10 +22,6 @@ import {
   roleModelForAgentType,
   selectSubagentModel,
 } from "./agent-types.ts";
-import {
-  CHILD_EXCLUDED_TOOL_NAMES,
-  childToolPolicy,
-} from "../shared/child-session.ts";
 
 const VALID = `---
 name: explore

@@ -6,14 +6,14 @@ import {
   fitNavigationSides,
   renderNavigationMetrics,
 } from "../shared/below-editor-navigation.ts";
-import { SPINNER_INTERVAL_MS, spinnerFrame } from "../shared/spinner.ts";import { sanitizeTerminalText } from "../shared/terminal-text.ts";
+import { SPINNER_INTERVAL_MS, spinnerFrame } from "../shared/spinner.ts";
+import { sanitizeTerminalText } from "../shared/terminal-text.ts";
 import {
   aggregateUsage,
   countStates,
   formatElapsed,
   formatTokens,
   statusColor,
-  statusSquare,
   type Theme,
   type WorkflowDetails,
   type WorkflowStatus,
@@ -66,7 +66,8 @@ export class WorkflowStripWidget {
     this.timer = setInterval(
       () => this.tui.requestRender(),
       SPINNER_INTERVAL_MS,
-    );    this.timer.unref?.();
+    );
+    this.timer.unref?.();
   }
 
   dispose() {
@@ -80,7 +81,8 @@ export class WorkflowStripWidget {
     const entry = this.getEntry();
     if (!entry) return [];
     const details = entry.details;
-    const { done, failed, uncertain } = countStates(details);    const settled = done + failed;
+    const { done, failed, uncertain } = countStates(details);
+    const settled = done + failed;
     const usage = aggregateUsage(details.agents);
     const tokenCount = usage.input + usage.output;
     const lines: string[] = [];
@@ -104,7 +106,8 @@ export class WorkflowStripWidget {
         details.agents.length > 0
           ? `${settled}/${details.agents.length} agents${uncertain ? ` · ${uncertain} uncertain` : ""}`
           : undefined,
-        formatElapsed(details.startedAt, details.finishedAt),        tokenCount > 0 ? `${formatTokens(tokenCount)} tokens` : undefined,
+        formatElapsed(details.startedAt, details.finishedAt),
+        tokenCount > 0 ? `${formatTokens(tokenCount)} tokens` : undefined,
       ],
       this.strip.focused ? "enter open · ↑ back" : "↓ to manage",
       details.status === "running" ? undefined : statusColor(details.status),
@@ -127,7 +130,7 @@ export class WorkflowStripWidget {
             : "running";
       lines.push(
         truncateToWidth(
-          `  ${statusSquare(state, this.theme)} ${this.theme.fg("text", cleanLine(agent.label))}${phase}${model}`,
+          `  ${statusGlyph(state, this.theme, Date.now())} ${this.theme.fg("text", cleanLine(agent.label))}${phase}${model}`,
           width,
         ),
       );
@@ -152,7 +155,6 @@ export class WorkflowStripWidget {
       );
     }
     return lines;
- (feat: polish OpenPI UI and stabilize delegate tools (#52))
   }
 }
 

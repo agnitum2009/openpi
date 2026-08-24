@@ -22,7 +22,7 @@ import type {
 import { Text } from "@earendil-works/pi-tui";
 import { Cause, Effect, Exit } from "effect";
 import { type Static, Type } from "typebox";
-import { formatCapturedOutput } from "../file-search/src/output.ts";
+import { formatCapturedOutput } from "../shared/output-capture.ts";
 import { sanitizeTerminalText } from "../shared/terminal-text.ts";
 import {
   OPENPI_TOOL_SURFACE,

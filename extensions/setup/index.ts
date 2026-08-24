@@ -49,8 +49,6 @@ import {
   type MyPiSetupConfig,
 } from "../shared/setup-config.ts";
 
-
- (feat(ui): drop cost from the default footer layout (#56))
 async function maybeOfferPiIntercom(
   ctx: ExtensionCommandContext,
   status: PiIntercomStatus,
@@ -262,12 +260,14 @@ export default function openPiSetup(pi: ExtensionAPI) {
       bash_tool_display: Type.Optional(
         StringEnum(DETAIL_DISPLAYS, {
           description:
-            "How Bash commands and output render by default: compact shows one semantic activity row with running/success/failure state; app.tools.expand restores Pi's native command, output, error, timing, and full-output metadata. Full keeps Pi's native rendering expanded by default. Omit to preserve the current value.",        }),
+            "How Bash commands and output render by default: compact shows one semantic activity row with running/success/failure state; app.tools.expand restores Pi's native command, output, error, timing, and full-output metadata. Full keeps Pi's native rendering expanded by default. Omit to preserve the current value.",
+        }),
       ),
       file_mutation_display: Type.Optional(
         StringEnum(DETAIL_DISPLAYS, {
           description:
-            "How Write/Edit content and diffs render by default: compact shows one semantic activity row with path, status, and line/diff counts; app.tools.expand restores Pi's native preview, output, error, and diff. Full keeps Pi's native rendering expanded by default. Omit to preserve the current value.",        }),
+            "How Write/Edit content and diffs render by default: compact shows one semantic activity row with path, status, and line/diff counts; app.tools.expand restores Pi's native preview, output, error, and diff. Full keeps Pi's native rendering expanded by default. Omit to preserve the current value.",
+        }),
       ),
       subagent_role_models: Type.Optional(SUBAGENT_ROLE_MODELS_SCHEMA),
       post_edit_command: Type.Optional(
@@ -280,7 +280,7 @@ export default function openPiSetup(pi: ExtensionAPI) {
       extension_load_group: Type.Optional(
         StringEnum(EXTENSION_LOAD_GROUPS, {
           description:
-            "Which OpenPI extension load group the package manifest exposes: all (26 extensions, default), core-runtime (no ask-user/context-pivot), core (system+setup+core only, pure coding). Requires /reload to activate.",
+            "Which OpenPI extension load group the package manifest exposes: all (28 extensions, default), core-runtime (no ask-user/context-pivot), core (system+setup+core only, pure coding). Requires /reload to activate.",
         }),
       ),
     }),
@@ -455,7 +455,7 @@ export default function openPiSetup(pi: ExtensionAPI) {
           "",
           "Capability discovery is explicit by default; adaptive is an opt-in that keeps only openpi_load_tools visible so the model may load useful groups. Footer tips: presets are powerline, powerline-mono, compact; style is plain/powerline/powerline-mono; custom layouts use ui_footer_lines (2D enum arrays with optional flex). Do not use ui_footer_items together with ui_footer_lines. Built-in Agent role models (explorer, implementer, reviewer, advisor) are shared by subagent_spawn and workflow agent_type; they inherit the parent unless assigned an available registry model, and clearing an assignment restores inheritance. Custom agent-type files still override built-in role definitions. A Nerd Font renders Footer Codicons and powerline seams as designed; text stays readable without it. Changes apply immediately in the active TUI session. Intercom installation is handled only by the native setup confirmation; do not install packages or edit its config yourself.",
           "",
-          "Extension load groups: all (26 extensions, default), core-runtime (drops ask-user/context-pivot), core (system+setup+core only). Switching groups rewrites the OpenPI package manifest's pi.extensions list and takes effect after /reload.",
+          "Extension load groups: all (28 extensions, default), core-runtime (drops ask-user/context-pivot), core (system+setup+core only). Switching groups rewrites the OpenPI package manifest's pi.extensions list and takes effect after /reload.",
           "",
           "Use configure_my_pi_setup to apply only the requested OpenPI-owned changes and preserve everything else. Interpret model names from the available Pi registry. Do not edit configuration files directly.",
         ]

@@ -9,7 +9,7 @@
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Data, Effect } from "effect";
-import type { CapturedOutput } from "../../file-search/src/output.ts";
+import type { CapturedOutput } from "../../shared/output-capture.ts";
 import {
   discardCapturedOutput,
   executeSearchProcess,

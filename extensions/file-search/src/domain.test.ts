@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildFdArgs, buildRgArgs, normalizeSearchPath } from "./args.ts";
-import { formatCapturedOutput } from "./output.ts";
+import { formatCapturedOutput } from "../../shared/output-capture.ts";
 import { releaseAsset, type PlatformTarget } from "./binaries.ts";
 
 test("normalizeSearchPath strips @ and expands ~", () => {

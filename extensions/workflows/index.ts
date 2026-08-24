@@ -55,7 +55,19 @@ import {
   registerEditorLayer,
   removeEditorLayer,
 } from "../shared/editor-layers.ts";
-import { fitNavigationSides } from "../shared/below-editor-navigation.ts";import { loadSetupConfig } from "../shared/setup-config.ts";
+import {
+  installEditorEnhancements,
+  registerEditorStrip,
+} from "../shared/editor-strip-port.ts";
+import { setRunningWorkflows } from "../shared/session-liveness.ts";
+import {
+  createWorktree,
+  reclaimWorktree,
+  type Worktree,
+  type WorktreeCleanup,
+} from "../shared/worktree.ts";
+import { fitNavigationSides } from "../shared/below-editor-navigation.ts";
+import { loadSetupConfig } from "../shared/setup-config.ts";
 import { SPINNER_INTERVAL_MS } from "../shared/spinner.ts";
 import {
   OPENPI_TOOL_SURFACE,
@@ -168,7 +180,8 @@ import {
 } from "./result-delivery.ts";
 import {
   beginProcessReplayWorkspaceLease,
-  createReplayIdentity,  isReplaySafeAgentCall,
+  createReplayIdentity,
+  isReplaySafeAgentCall,
 } from "./replay-safety.ts";
 import {
   createWorkflowResources,
@@ -796,8 +809,6 @@ export default function workflows(pi: ExtensionAPI) {
       }));
     },
   });
-  let completedRuns = 0;
-  let failedRuns = 0;
   let widgetVisible = false;
   let requestWidgetRender: (() => void) | undefined;
   let dashboardOpen = false;

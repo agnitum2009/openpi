@@ -19,10 +19,10 @@ import {
   type ExtensionLoadGroup,
 } from "../shared/setup-config.ts";
 
-test("load groups: all = 26 unique entries; system + setup always loaded", () => {
+test("load groups: all = 28 unique entries; system + setup always loaded", () => {
   const entries = extensionEntriesForGroup("all");
-  assert.equal(entries.length, 26);
-  assert.equal(new Set(entries).size, 26);
+  assert.equal(entries.length, 28);
+  assert.equal(new Set(entries).size, 28);
   for (const entry of entries) {
     assert.ok(entry.startsWith("./extensions/"));
     assert.ok(entry.endsWith("/index.ts"));
@@ -44,13 +44,13 @@ test("load groups: all = 26 unique entries; system + setup always loaded", () =>
 
 test("load groups: core-runtime drops utility; core drops utility + runtime", () => {
   const coreRuntime = extensionEntriesForGroup("core-runtime");
-  assert.equal(coreRuntime.length, 24);
+  assert.equal(coreRuntime.length, 26);
   for (const name of OPENPI_EXTENSION_GROUPS.utility) {
     assert.ok(!coreRuntime.includes(`./extensions/${name}/index.ts`));
   }
 
   const core = extensionEntriesForGroup("core");
-  assert.equal(core.length, 21);
+  assert.equal(core.length, 23);
   for (const name of [
     ...OPENPI_EXTENSION_GROUPS.utility,
     ...OPENPI_EXTENSION_GROUPS.runtime,

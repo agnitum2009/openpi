@@ -73,6 +73,16 @@ import {
   patchOwnedTools,
 } from "../shared/tool-surface.ts";
 import {
+  installEditorEnhancements,
+  registerEditorStrip,
+} from "../shared/editor-strip-port.ts";
+import {
+  recordSettledSubagent,
+  setRunningSubagentDescriptions,
+  resetRunningSubagentDescriptions,
+} from "../shared/task-reconcile.ts";
+import { setRunningSubagents } from "../shared/session-liveness.ts";
+import {
   createWorktree,
   reclaimWorktree,
   type Worktree,
@@ -83,11 +93,14 @@ import {
   selectSubagentStripEntry,
 } from "./navigation.ts";
 import {
-  type AgentType,  formatAgentTypeDiagnostics,
+  type AgentType,
+  agentTypeWarnings,
+  formatAgentTypeDiagnostics,
   loadAgentTypes,
   roleModelForAgentType,
   selectSubagentModel,
-} from "../shared/agent-types.ts";import { deriveBtwTitle, isModelVisible } from "./src/by-the-way.ts";
+} from "../shared/agent-types.ts";
+import { deriveBtwTitle, isModelVisible } from "./src/by-the-way.ts";
 import {
   BACKEND_NAMES,
   formatElapsed,
@@ -101,7 +114,8 @@ import {
   type SubagentIdCounters,
   subagentIdWatermark,
 } from "./src/id-sequence.ts";
-import { SubagentManager, type SubagentManagerShape } from "./src/manager.ts";import {
+import { SubagentManager, type SubagentManagerShape } from "./src/manager.ts";
+import {
   buildSubagentResultMessage,
   buildSubagentSendResult,
   buildSubagentSpawnResult,
@@ -124,7 +138,8 @@ import {
   type ParentContextUsage,
 } from "../shared/result-budget.ts";
 import { createSubagentResultDelivery } from "./src/result-delivery.ts";
-import {  createSubagentRuntime,
+import {
+  createSubagentRuntime,
   runTool,
   type SubagentRuntime,
 } from "./src/runtime.ts";
@@ -218,7 +233,7 @@ export function createSubagentResultDispatcher(
   ) => string = truncatedOutput,
   getContextUsage: () => ParentContextUsage | undefined = () => undefined,
 ) {
-  return (snaps: readonly SubagentSnapshot[], wake: boolean) => {
+  return (snaps: readonly SubagentSnapshot[]) => {
     if (snaps.length === 0) return;
     const emptyMessages = snaps.map((snap) =>
       buildSubagentResultMessage({
@@ -290,7 +305,7 @@ export function createSubagentResultDispatcher(
         display: false,
         details,
       },
-      resultDeliveryOptions(wake),
+      { deliverAs: "followUp", triggerTurn: true },
     );
   };
 }
@@ -377,7 +392,8 @@ export default function (pi: ExtensionAPI) {
     // delivery coordinator batches results that settled while it was busy.
     deliver: dispatchResults,
   });
-  pi.on("agent_settled", () => resultDelivery.parentSettled());  const registerStableToolFamily = () =>
+  pi.on("agent_settled", () => resultDelivery.parentSettled());
+  const registerStableToolFamily = () =>
     patchOwnedTools(pi, "subagents", {
       enable: OPENPI_TOOL_SURFACE.subagents.entry,
     });
@@ -522,17 +538,6 @@ export default function (pi: ExtensionAPI) {
    * already finished". `nextTurn` still enters context with the user's next
    * message, without demanding a reply.
    */
-  const deliverResults = (
-    snaps: readonly SubagentSnapshot[],
-    wake: boolean,
-  ) => {
-    dispatchResults(snaps, wake);
-  };
-
-  const flushResults = (wake: boolean) => {
-    deliverResults(resultDelivery.drain(), wake);
-  };
-
   const deliverBtwResult = (snap: SubagentSnapshot) => {
     // appendEntry is a synchronous SessionManager operation and emits an
     // entry_appended event, so it is safe while the parent is streaming and
@@ -588,9 +593,6 @@ export default function (pi: ExtensionAPI) {
     // Defer a copy: the live snapshot keeps mutating if the subagent is
     // restarted before the deferred result flushes.
     resultDelivery.defer({ ...snap, meta: { ...snap.meta } });
-    // Settled while the model sits idle: it has nothing else in flight, so
-    // this is the result it is waiting on — wake it.
-    if (sessionContext?.isIdle()) flushResults(true);
   };
 
   pi.on("session_start", (_event, ctx) => {
@@ -627,13 +629,6 @@ export default function (pi: ExtensionAPI) {
     settledAcknowledgedAt = Date.now();
     managerPromise?.then(updateStatus).catch(() => undefined);
   });
-
-  // These settled while the model was working on something else. Upstream #48
-  // (merged 0.4.0): nextTurn is only consumed on another user prompt, so
-  // fire-and-forget results would never fulfill their documented auto
-  // re-invocation contract. Flush the batch as ONE follow-up at the
-  // authoritative parent boundary (same drain-once semantics as idle wake).
-  pi.on("agent_settled", () => flushResults(true));
 
   pi.on("session_shutdown", async () => {
     resultDelivery.clear();

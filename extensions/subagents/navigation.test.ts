@@ -97,7 +97,7 @@ test("subagent HUD mirrors omp: header plus one row per running subagent", () =>
     const idle = widget.render(100);
     // Header + one row per running subagent + unread-settled notice row.
     assert.equal(idle.length, 4);
-    assert.match(idle[0]!, /Subagents/);
+    assert.match(idle[0]!, /subagents/);
     assert.match(idle[0]!, /2 running/);
     assert.match(idle[0]!, /1 done/);
     assert.doesNotMatch(idle[0]!, /finished/);
@@ -123,8 +123,6 @@ test("subagent HUD mirrors omp: header plus one row per running subagent", () =>
     widget.dispose();
   }
 });
-
-
 
 test("subagent HUD collapses running rows past its limit", () => {
   const strip = new BelowEditorStripState();
@@ -250,12 +248,9 @@ test("running rows show intent fallback, failure streak, and stall warning", () 
   } finally {
     stalled.dispose();
   }
-
-
-test("the metrics tail stays quiet while a run is healthy", () => {
+});
 
 test("a lone subagent needs no count: glyph and name carry the state", () => {
- (feat(ui): aggregate the subagent strip when several runs are active (#59))
   const strip = new BelowEditorStripState();
   const render = (status: SubagentSnapshot["status"]) => {
     const entries = [
@@ -306,6 +301,10 @@ test("several active subagents aggregate instead of naming just one", () => {
     markingTheme,
     new BelowEditorStripState(),
     () => entry,
+    () => [
+      snapshot("sa-1", "running", Date.now() - 4_000),
+      snapshot("sa-2", "running", Date.now() - 2_000),
+    ],
   );
   try {
     const rendered = widget.render(400)[0]!;
@@ -315,7 +314,4 @@ test("several active subagents aggregate instead of naming just one", () => {
   } finally {
     widget.dispose();
   }
-});
-
-(feat: polish OpenPI UI and stabilize delegate tools (#52))
 });

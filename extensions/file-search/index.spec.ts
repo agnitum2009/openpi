@@ -30,7 +30,7 @@ import {
   COMPLETE_OUTPUT_MAX_BYTES,
   formatCapturedOutput,
   formatOutput,
-} from "./src/output.ts";
+} from "../shared/output-capture.ts";
 import { executeSearchProcess } from "./src/process.ts";
 import {
   expandedPreview,

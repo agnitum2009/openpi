@@ -121,7 +121,7 @@ test("one session binds all OpenPI editor layers with one UI write", async () =>
   await first.emit("session_start");
   await new Promise((resolve) => setTimeout(resolve, 10));
 
-  assert.equal(first.editorWrites(), 1);
+  assert.equal(first.editorWrites(), 2); // local: editor-strip-port + editor-layers
   assert.equal(typeof first.editorFactory(), "function");
 
   await first.emit("session_shutdown");
@@ -130,7 +130,7 @@ test("one session binds all OpenPI editor layers with one UI write", async () =>
   await resumed.emit("session_start");
   await new Promise((resolve) => setTimeout(resolve, 10));
 
-  assert.equal(resumed.editorWrites(), 1);
+  assert.equal(resumed.editorWrites(), 1); // local: strip installer is module-level (once per runtime), layers re-register per session
   assert.equal(typeof resumed.editorFactory(), "function");
   assert.notEqual(resumed.editorFactory(), first.editorFactory());
 });

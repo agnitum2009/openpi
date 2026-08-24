@@ -4,8 +4,13 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { effectiveChildToolAllowlist } from "../../shared/child-session.ts";
 import { SUBAGENT_ROLE_NAMES } from "../../shared/subagent-roles.ts";
-import { type AgentType, READ_ONLY_AGENT_TOOLS } from "../../shared/agent-types.ts";
-import { BACKEND_NAMES, REASONING_EFFORTS } from "./domain.ts";import { MAX_RUNNING } from "./manager.ts";
+import {
+  type AgentType,
+  READ_ONLY_AGENT_TOOLS,
+} from "../../shared/agent-types.ts";
+import { BACKEND_NAMES } from "./domain.ts";
+import { MAX_RUNNING } from "./manager.ts";
+import { REASONING_EFFORTS } from "../../shared/agent-types.ts";
 
 export const SUBAGENT_SCHEMA_BUDGETS = Object.freeze({
   rolePurposeBytes: 240,
@@ -148,7 +153,8 @@ export const SUBAGENT_SPAWN_PARAMETER_DESCRIPTIONS = {
   isolation:
     'Use "worktree" for concurrent writers and tell the child to commit. See the Subagents Skill for lifecycle details.',
   model:
-    'Optional "provider/model-id" or current-provider model override. Omit to use the preset, configured role, or parent default. Never guess a model name.',  reasoningEffort:
+    'Optional "provider/model-id" or current-provider model override. Omit to use the preset, configured role, or parent default. Never guess a model name.',
+  reasoningEffort:
     "Optional child thinking level. Honor the user's requested level. Otherwise choose a level supported by the resolved child model based on the selected role and task difficulty. An explicit value overrides a role default.",
 };
 

@@ -13,9 +13,14 @@ import { spinnerFrame } from "../shared/spinner.ts";
 import { sanitizeTerminalText } from "../shared/terminal-text.ts";
 import { requestWidgetRepaint } from "../shared/ui-screen.ts";
 import { formatElapsed, type SubagentSnapshot } from "./src/domain.ts";
+import {
+  failureStreakOf,
+  isStalled,
+  lastActivityOf,
+  lastIntentOf,
+} from "./src/domain.ts";
 
 import { contextPercent } from "../shared/context-utilization.ts";
- (fix: review batch — docs intent words, subagent watchdog, bin cache, workflow reader unification (#60))
 
 export interface SubagentStripEntry {
   snapshot: SubagentSnapshot;
@@ -161,14 +166,26 @@ export class SubagentStripWidget {
       : "subagents";
     const label = this.strip.focused
       ? this.theme.bold(this.theme.fg("accent", labelText))
-      : this.theme.fg("text", labelText); (feat(ui): aggregate the subagent strip when several runs are active (#59))
+      : this.theme.fg("text", labelText);
     const percent = contextPercent(snapshot.usage);
     const right = renderNavigationMetrics(
       this.theme,
       [
-        single ? undefined : running.length > 0 ? `${running.length} running` : undefined,
-        single ? undefined : counts.done > 0 ? `${counts.done} done` : undefined,
-        single ? undefined : counts.failed > 0 ? `${counts.failed} failed` : undefined,
+        single
+          ? undefined
+          : running.length > 0
+            ? `${running.length} running`
+            : undefined,
+        single
+          ? undefined
+          : counts.done > 0
+            ? `${counts.done} done`
+            : undefined,
+        single
+          ? undefined
+          : counts.failed > 0
+            ? `${counts.failed} failed`
+            : undefined,
         formatElapsed(snapshot),
         percent === undefined ? undefined : `${percent}% ctx`,
       ],
@@ -177,11 +194,7 @@ export class SubagentStripWidget {
         ? undefined
         : statusColor(snapshot.status),
     );
-    const header = fitNavigationSides(
-      ` ${marker} ${label}`,
-      right,
-      width,
-    );
+    const header = fitNavigationSides(` ${marker} ${label}`, right, width);
     lines.push(header);
 
     // One row per running subagent, same `■ title · model` shape the single
@@ -190,6 +203,7 @@ export class SubagentStripWidget {
     // subagent is mid-tool, its newest unfinished tool shows inline (omp's
     // `currentTool · args`): the row moves when work moves, so a long-running
     // child reads as busy instead of frozen.
+    const settled = counts.done + counts.failed;
     const visible = running.slice(0, SUBAGENT_HUD_ROWS);
     const hidden = running.length - visible.length;
     for (const item of visible) {
@@ -224,7 +238,7 @@ export class SubagentStripWidget {
           : "";
       lines.push(
         truncateToWidth(
-          `  ${statusSquare(item, this.theme)} ${title}${model ? this.theme.fg("dim", ` · ${model}`) : ""}${action}${failureMark}`,
+          `  ${statusGlyph(item, this.theme, now)} ${title}${model ? this.theme.fg("dim", ` · ${model}`) : ""}${action}${failureMark}`,
           width,
         ),
       );
@@ -246,6 +260,5 @@ export class SubagentStripWidget {
       );
     }
     return lines;
- (feat: polish OpenPI UI and stabilize delegate tools (#52))
   }
 }

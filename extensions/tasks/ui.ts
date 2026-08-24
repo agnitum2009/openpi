@@ -556,6 +556,14 @@ class TasksScreen implements Component {
       ),
     ];
   }
+
+  invalidate() {}
+}
+
+export async function openTasksScreen(
+  ctx: ExtensionCommandContext,
+  getSnapshot: () => TaskSnapshot,
+  onSyncStale: () => void = () => {},
 ) {
   if (ctx.mode !== "tui") {
     if (ctx.hasUI)

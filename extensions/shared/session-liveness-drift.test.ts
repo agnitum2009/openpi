@@ -115,6 +115,12 @@ function bindPrintInstance(factory: (pi: ExtensionAPI) => void) {
     hasUI: false,
     cwd: process.cwd(),
     isProjectTrusted: () => false,
+    sessionManager: {
+      getLeafId: () => "leaf",
+      getBranch: () => [],
+      getSessionId: () => "session",
+      getEntries: () => [],
+    },
     ui: {
       notify() {},
       setStatus() {},

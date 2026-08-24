@@ -42,7 +42,7 @@ export type ReasoningLevel = (typeof REASONING_LEVELS)[number];
  * Extension load groups (P2, token-lazyload plan). The OpenPI package
  * manifest lists explicit extension entries; the setup command rewrites
  * that list per group so users pick a load shape per task profile.
- * - "all": everything (26 extensions) — the default, current behavior.
+ * - "all": everything (28 extensions) — the default, current behavior.
  * - "core-runtime": system + setup + core + runtime (no ask-user/context-pivot).
  * - "core": system + setup + core only — pure coding sessions.
  * system + setup are always loaded: system extensions carry commands/UI,
@@ -64,6 +64,7 @@ export const OPENPI_EXTENSION_GROUPS = {
     "file-mutation-display",
     "file-search",
     "git-info",
+    "git-read",
     "model-info",
     "multi-signal-sync",
     "post-edit",
@@ -72,6 +73,7 @@ export const OPENPI_EXTENSION_GROUPS = {
     "suggestions",
     "turn-time",
     "ui-customization",
+    "user-input-fold",
     "working-indicator",
   ],
   setup: ["setup"],
@@ -1077,7 +1079,9 @@ export function formatSetupConfig(
     `UI: large header ${config.ui.showHeader ? "on" : "off"} · custom footer ${footer}`,
     `Subagent results: ${config.ui.subagentResultDisplay === "full" ? "full by default" : "compact status summary (Ctrl+O expands full output)"}`,
     `Bash operations: ${config.ui.bashToolDisplay === "full" ? "expanded by default" : "one-line activity summary (Ctrl+O restores native evidence)"}`,
-    `Write/Edit operations: ${config.ui.fileMutationDisplay === "full" ? "expanded by default" : "one-line activity summary (Ctrl+O restores native evidence)"}`,    `Post-edit command: ${config.postEdit.command ? config.postEdit.command : "off"}`,
+    `Write/Edit operations: ${config.ui.fileMutationDisplay === "full" ? "expanded by default" : "one-line activity summary (Ctrl+O restores native evidence)"}`,
+    `Extension load group: ${config.extensions.loadGroup} · ${extensionEntriesForGroup(config.extensions.loadGroup).length} extensions · /reload applies`,
+    `Post-edit command: ${config.postEdit.command ? config.postEdit.command : "off"}`,
     `Agent role models (Subagents + Workflows): ${SUBAGENT_ROLE_NAMES.map((role) => `${role} ${config.subagents.roleModels[role] ? `${config.subagents.roleModels[role].provider}/${config.subagents.roleModels[role].model}` : "inherit"}`).join(" · ")}`,
     ...integrationLines,
   ].join("\n");
