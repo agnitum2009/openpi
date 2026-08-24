@@ -750,8 +750,6 @@ export default function workflows(pi: ExtensionAPI) {
    * next explicit request acknowledges them.
    */
   let lastContext: ExtensionContext | undefined;
-<<<<<<< HEAD
-=======
   const completionEnvelope = (
     details: WorkflowDetails,
   ): WorkflowCompletionEnvelope => {
@@ -800,7 +798,6 @@ export default function workflows(pi: ExtensionAPI) {
   });
   let completedRuns = 0;
   let failedRuns = 0;
->>>>>>> cc92f05 (feat(workflows): release parent turns and harden large fan-out (#92))
   let widgetVisible = false;
   let requestWidgetRender: (() => void) | undefined;
   let dashboardOpen = false;

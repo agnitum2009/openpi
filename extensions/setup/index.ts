@@ -231,7 +231,8 @@ export default function openPiSetup(pi: ExtensionAPI) {
       ),
       ui_footer_style: Type.Optional(
         StringEnum(FOOTER_STYLES, {
-          description: "Footer visual style (plain/powerline/powerline-mono).",
+          description:
+            "Footer visual style: plain (Pi theme separators), powerline (ANSI256 colored blocks with  seams), powerline-mono (high-contrast gray powerline). A Nerd Font renders Codicon metric glyphs and powerline seams as designed; text stays readable without it. Omit to preserve the current style (or the preset's style when a preset is applied).",
         }),
       ),
       ui_footer_lines: Type.Optional(
@@ -452,7 +453,7 @@ export default function openPiSetup(pi: ExtensionAPI) {
           "Current configuration:",
           currentConfiguration,
           "",
-          "Capability discovery is explicit by default; adaptive is an opt-in that keeps only openpi_load_tools visible so the model may load useful groups. Footer tips: presets are powerline, powerline-mono, compact; style is plain/powerline/powerline-mono; custom layouts use ui_footer_lines (2D enum arrays with optional flex). Do not use ui_footer_items together with ui_footer_lines. Built-in Agent role models (explorer, implementer, reviewer, advisor) are shared by subagent_spawn and workflow agent_type; they inherit the parent unless assigned an available registry model, and clearing an assignment restores inheritance. Custom agent-type files still override built-in role definitions. Nerd Font only affects powerline separator glyphs. Changes apply immediately in the active TUI session. Intercom installation is handled only by the native setup confirmation; do not install packages or edit its config yourself.",
+          "Capability discovery is explicit by default; adaptive is an opt-in that keeps only openpi_load_tools visible so the model may load useful groups. Footer tips: presets are powerline, powerline-mono, compact; style is plain/powerline/powerline-mono; custom layouts use ui_footer_lines (2D enum arrays with optional flex). Do not use ui_footer_items together with ui_footer_lines. Built-in Agent role models (explorer, implementer, reviewer, advisor) are shared by subagent_spawn and workflow agent_type; they inherit the parent unless assigned an available registry model, and clearing an assignment restores inheritance. Custom agent-type files still override built-in role definitions. A Nerd Font renders Footer Codicons and powerline seams as designed; text stays readable without it. Changes apply immediately in the active TUI session. Intercom installation is handled only by the native setup confirmation; do not install packages or edit its config yourself.",
           "",
           "Extension load groups: all (26 extensions, default), core-runtime (drops ask-user/context-pivot), core (system+setup+core only). Switching groups rewrites the OpenPI package manifest's pi.extensions list and takes effect after /reload.",
           "",
