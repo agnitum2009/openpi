@@ -135,6 +135,9 @@ export const PLAN_SAFE_TOOLS = new Set([
   "ls",
   "fd",
   "rg",
+  "git_show",
+  "git_diff",
+  "git_log",
   // Web research without write actions.
   "web_search",
   "source_check",
@@ -170,7 +173,7 @@ export const PLAN_SAFE_TOOLS = new Set([
 ]);
 
 export const BLOCK_REASON =
-  "Plan mode is active: no changes yet. Keep investigating with read-only tools (read, fd, rg, web search, read-only bash like git log/diff/status, and subagent_spawn for parallel exploration — planning children get read-only tools). When the plan is decision-complete, call plan_ready alone with the complete Markdown plan; the user then chooses the next action with `/plan`, or cancels with `/plan off`.";
+  "Plan mode is active: no changes yet. Keep investigating with read-only tools (read, fd, rg, git_log/git_diff/git_show, web search, read-only bash like git log/status, and subagent_spawn for parallel exploration — planning children get read-only tools). Raw git diff/show and diff-generating git log forms are blocked; use the structured Git tools instead. When the plan is decision-complete, call plan_ready alone with the complete Markdown plan; the user then chooses the next action with `/plan`, or cancels with `/plan off`.";
 
 export function planToolCallDecision(
   toolName: string,
