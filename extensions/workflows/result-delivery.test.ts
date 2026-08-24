@@ -148,3 +148,195 @@ test("a receipt persistence failure retains the same delivery for at-least-once 
   assert.equal(run.delivery?.id, "workflow:wf_receipt:terminal");
   assert.match(run.delivery?.lastError ?? "", /receipt persistence failed/i);
 });
+
+test("a completion queued during a failed flush is drained without another lifecycle event", async () => {
+  const first = details("wf_during_flush_a");
+  const second = details("wf_during_flush_b");
+  let idle = false;
+  let releaseFirstAttempt!: () => void;
+  let markFirstAttemptStarted!: () => void;
+  const firstAttemptStarted = new Promise<void>((resolve) => {
+    markFirstAttemptStarted = resolve;
+  });
+  const calls: string[][] = [];
+  const delivery = createWorkflowResultDelivery({
+    isIdle: () => idle,
+    persist: () => {},
+    deliver: async (envelopes) => {
+      calls.push(envelopes.map((entry) => entry.deliveryId));
+      if (calls.length === 1) {
+        markFirstAttemptStarted();
+        await new Promise<void>((resolve) => {
+          releaseFirstAttempt = resolve;
+        });
+        throw new Error("session unavailable");
+      }
+      return envelopes.map((entry) => ({
+        deliveryId: entry.deliveryId,
+        delivered: true,
+      }));
+    },
+  });
+
+  delivery.defer({
+    deliveryId: first.delivery!.id,
+    runId: first.runId,
+    details: first,
+  });
+  idle = true;
+  const flushing = delivery.parentSettled();
+  await firstAttemptStarted;
+  delivery.defer({
+    deliveryId: second.delivery!.id,
+    runId: second.runId,
+    details: second,
+  });
+  releaseFirstAttempt();
+  await flushing;
+
+  assert.equal(delivery.size(), 0);
+  assert.equal(first.delivery?.state, "delivered");
+  assert.equal(second.delivery?.state, "delivered");
+  assert.deepEqual(calls, [
+    ["workflow:wf_during_flush_a:terminal"],
+    [
+      "workflow:wf_during_flush_b:terminal",
+      "workflow:wf_during_flush_a:terminal",
+    ],
+  ]);
+});
+
+test("a persistence exception cannot drop later envelopes from a failed batch", async () => {
+  const first = details("wf_persist_a");
+  const second = details("wf_persist_b");
+  let failPersistence = false;
+  let failTransport = true;
+  const persistedAfterFailure: string[] = [];
+  const delivery = createWorkflowResultDelivery({
+    isIdle: () => false,
+    persist: (current) => {
+      if (!failPersistence) return;
+      persistedAfterFailure.push(current.runId);
+      if (current.runId === first.runId) throw new Error("disk unavailable");
+    },
+    deliver: async (envelopes) => {
+      if (failTransport) throw new Error("session unavailable");
+      return envelopes.map((entry) => ({
+        deliveryId: entry.deliveryId,
+        delivered: true,
+      }));
+    },
+  });
+
+  for (const run of [first, second]) {
+    delivery.defer({
+      deliveryId: run.delivery!.id,
+      runId: run.runId,
+      details: run,
+    });
+  }
+  failPersistence = true;
+  await delivery.parentSettled();
+
+  assert.equal(delivery.size(), 2);
+  assert.deepEqual(persistedAfterFailure, [first.runId, second.runId]);
+  assert.equal(first.delivery?.state, "pending");
+  assert.equal(second.delivery?.state, "pending");
+
+  failPersistence = false;
+  failTransport = false;
+  await delivery.parentSettled();
+  assert.equal(delivery.size(), 0);
+  assert.equal(first.delivery?.state, "delivered");
+  assert.equal(second.delivery?.state, "delivered");
+});
+
+test("a persistence exception cannot drop later unacknowledged receipts", async () => {
+  const first = details("wf_unack_a");
+  const second = details("wf_unack_b");
+  let failPersistence = false;
+  let acknowledge = false;
+  const persistedAfterFailure: string[] = [];
+  const delivery = createWorkflowResultDelivery({
+    isIdle: () => false,
+    persist: (current) => {
+      if (!failPersistence) return;
+      persistedAfterFailure.push(current.runId);
+      if (current.runId === first.runId) throw new Error("disk unavailable");
+    },
+    deliver: async (envelopes) =>
+      envelopes.map((entry) => ({
+        deliveryId: entry.deliveryId,
+        delivered: acknowledge,
+      })),
+  });
+
+  for (const run of [first, second]) {
+    delivery.defer({
+      deliveryId: run.delivery!.id,
+      runId: run.runId,
+      details: run,
+    });
+  }
+  failPersistence = true;
+  await delivery.parentSettled();
+
+  assert.equal(delivery.size(), 2);
+  assert.deepEqual(persistedAfterFailure, [first.runId, second.runId]);
+  assert.equal(first.delivery?.state, "pending");
+  assert.equal(second.delivery?.state, "pending");
+
+  failPersistence = false;
+  acknowledge = true;
+  await delivery.parentSettled();
+  assert.equal(delivery.size(), 0);
+  assert.equal(first.delivery?.state, "delivered");
+  assert.equal(second.delivery?.state, "delivered");
+});
+
+test("a held-inline restore persistence failure does not block the final idle flush", async () => {
+  const first = details("wf_restore_a");
+  const second = details("wf_restore_b");
+  first.delivery!.state = "held-for-inline";
+  second.delivery!.state = "pending";
+  let failPersistence = true;
+  const delivery = createWorkflowResultDelivery({
+    isIdle: () => true,
+    persist: (current) => {
+      if (failPersistence && current.runId === first.runId) {
+        throw new Error("disk unavailable");
+      }
+    },
+    deliver: async (envelopes) =>
+      envelopes.map((entry) => ({
+        deliveryId: entry.deliveryId,
+        delivered: true,
+      })),
+  });
+
+  assert.equal(
+    delivery.restore({
+      deliveryId: first.delivery!.id,
+      runId: first.runId,
+      details: first,
+    }),
+    true,
+  );
+  assert.equal(
+    delivery.restore({
+      deliveryId: second.delivery!.id,
+      runId: second.runId,
+      details: second,
+    }),
+    true,
+  );
+  assert.equal(delivery.size(), 2);
+  assert.equal(first.delivery?.state, "pending");
+  assert.match(first.delivery?.lastError ?? "", /persistence failed/i);
+
+  failPersistence = false;
+  await delivery.flushIfIdle();
+  assert.equal(delivery.size(), 0);
+  assert.equal(first.delivery?.state, "delivered");
+  assert.equal(second.delivery?.state, "delivered");
+});

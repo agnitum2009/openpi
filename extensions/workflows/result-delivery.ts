@@ -38,6 +38,8 @@ export function createWorkflowResultDelivery(
 ) {
   const pending = new Map<string, WorkflowCompletionEnvelope>();
   let flushing: Promise<void> | undefined;
+  let flushRequested = false;
+  let wakeRequested = false;
 
   const persistState = (
     details: WorkflowDetails,
@@ -61,63 +63,113 @@ export function createWorkflowResultDelivery(
     pending.set(envelope.deliveryId, envelope);
   };
 
+  const retainPending = (
+    envelope: WorkflowCompletionEnvelope,
+    patch: Partial<NonNullable<WorkflowDetails["delivery"]>>,
+    persistenceFailure: string,
+  ) => {
+    // Memory owns the retry before persistence is attempted. A broken disk
+    // must not make this envelope, or any sibling after it, disappear from the
+    // current process.
+    enqueue(envelope);
+    try {
+      persistState(envelope.details, "pending", patch);
+    } catch (error) {
+      const delivery = envelope.details.delivery;
+      if (delivery) {
+        envelope.details.delivery = {
+          ...delivery,
+          state: "pending",
+          updatedAt: Date.now(),
+          lastError: `${persistenceFailure}: ${errorText(error)}`,
+        };
+      }
+    }
+  };
+
   const flush = async (wake: boolean) => {
-    if (flushing) return flushing;
+    if (flushing) {
+      flushRequested = true;
+      wakeRequested ||= wake;
+      return flushing;
+    }
     if (pending.size === 0) return;
-    const envelopes = [...pending.values()];
-    for (const envelope of envelopes) pending.delete(envelope.deliveryId);
 
     flushing = (async () => {
-      let receipts: readonly WorkflowDeliveryReceipt[];
-      try {
-        receipts = await options.deliver(envelopes, wake);
-      } catch (error) {
-        const message = errorText(error);
+      let passWake = wake;
+      while (pending.size > 0) {
+        flushRequested = false;
+        wakeRequested = false;
+        const envelopes = [...pending.values()];
         for (const envelope of envelopes) {
-          enqueue(envelope);
-          persistState(envelope.details, "pending", {
-            attempts: (envelope.details.delivery?.attempts ?? 0) + 1,
-            lastError: message,
-          });
+          pending.delete(envelope.deliveryId);
         }
-        return;
-      }
 
-      const byId = new Map(
-        receipts.map((receipt) => [receipt.deliveryId, receipt] as const),
-      );
-      for (const envelope of envelopes) {
-        const receipt = byId.get(envelope.deliveryId);
-        if (receipt?.delivered) {
-          try {
-            persistState(envelope.details, "delivered", {
-              attempts: (envelope.details.delivery?.attempts ?? 0) + 1,
-              deliveredAt: Date.now(),
-              lastError: undefined,
-            });
-          } catch (error) {
-            // The transport already accepted the message, but the durable
-            // receipt did not commit. Retain it for at-least-once recovery;
-            // the visible stable id lets the parent recognize a rare replay.
-            enqueue(envelope);
-            const delivery = envelope.details.delivery;
-            if (delivery) {
-              envelope.details.delivery = {
-                ...delivery,
-                state: "pending",
-                updatedAt: Date.now(),
-                lastError: `Delivery receipt persistence failed: ${errorText(error)}`,
-              };
-            }
+        let receipts: readonly WorkflowDeliveryReceipt[] | undefined;
+        try {
+          receipts = await options.deliver(envelopes, passWake);
+        } catch (error) {
+          const message = errorText(error);
+          for (const envelope of envelopes) {
+            retainPending(
+              envelope,
+              {
+                attempts: (envelope.details.delivery?.attempts ?? 0) + 1,
+                lastError: message,
+              },
+              "Pending delivery persistence failed",
+            );
           }
-          continue;
         }
-        enqueue(envelope);
-        persistState(envelope.details, "pending", {
-          attempts: (envelope.details.delivery?.attempts ?? 0) + 1,
-          lastError:
-            receipt?.error ?? "Completion delivery was not acknowledged",
-        });
+
+        if (receipts !== undefined) {
+          const byId = new Map(
+            receipts.map((receipt) => [receipt.deliveryId, receipt] as const),
+          );
+          for (const envelope of envelopes) {
+            const receipt = byId.get(envelope.deliveryId);
+            if (receipt?.delivered) {
+              try {
+                persistState(envelope.details, "delivered", {
+                  attempts: (envelope.details.delivery?.attempts ?? 0) + 1,
+                  deliveredAt: Date.now(),
+                  lastError: undefined,
+                });
+              } catch (error) {
+                // The transport already accepted the message, but the durable
+                // receipt did not commit. Retain it for at-least-once recovery;
+                // the visible stable id lets the parent recognize a rare replay.
+                enqueue(envelope);
+                const delivery = envelope.details.delivery;
+                if (delivery) {
+                  envelope.details.delivery = {
+                    ...delivery,
+                    state: "pending",
+                    updatedAt: Date.now(),
+                    lastError: `Delivery receipt persistence failed: ${errorText(error)}`,
+                  };
+                }
+              }
+              continue;
+            }
+            retainPending(
+              envelope,
+              {
+                attempts: (envelope.details.delivery?.attempts ?? 0) + 1,
+                lastError:
+                  receipt?.error ?? "Completion delivery was not acknowledged",
+              },
+              "Pending delivery persistence failed",
+            );
+          }
+        }
+
+        // A completion or lifecycle edge joined this pass while transport was
+        // in flight. Drain once more so that request is not lost. Failures
+        // retained above do not request their own immediate retry, preventing
+        // an unavailable transport from creating a busy loop.
+        if (!flushRequested) break;
+        passWake ||= wakeRequested;
       }
     })().finally(() => {
       flushing = undefined;
@@ -161,11 +213,14 @@ export function createWorkflowResultDelivery(
       // A process restart cannot still own the inline waiter. Deterministically
       // reconstruct pending delivery from the terminal artifact.
       if (state === "held-for-inline") {
-        persistState(envelope.details, "pending", {
-          lastError: "Inline waiter was not active after session restart",
-        });
+        retainPending(
+          envelope,
+          { lastError: "Inline waiter was not active after session restart" },
+          "Restored delivery state persistence failed",
+        );
+      } else {
+        enqueue(envelope);
       }
-      enqueue(envelope);
       return true;
     },
 
