@@ -30,6 +30,7 @@ pi install npm:@tt-a1i/openpi
 ```
 
 <p align="center">
+  <a href="https://tt-a1i.github.io/openpi/"><strong>项目网站</strong></a> ·
   <a href="#30-秒开始"><strong>立即开始</strong></a> ·
   <a href="#默认轻按需强">为什么默认更轻</a> ·
   <a href="#运行模型">看看它怎么工作</a> ·
