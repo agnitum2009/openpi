@@ -12,13 +12,18 @@ type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
     resolve = done;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
-function harness(mode: ExtensionContext["mode"] = "tui") {
+function harness(
+  mode: ExtensionContext["mode"] = "tui",
+  command = "npm run format",
+) {
   const handlers = new Map<string, Handler[]>();
   const executions: Array<{
     command: string;
@@ -48,7 +53,7 @@ function harness(mode: ExtensionContext["mode"] = "tui") {
       return result.promise;
     },
   } as unknown as ExtensionAPI;
-  postEdit(pi, () => "npm run format");
+  postEdit(pi, () => command);
 
   const emit = async (event: string, value: unknown = {}) => {
     for (const handler of handlers.get(event) ?? []) {
@@ -119,6 +124,42 @@ test("post-edit sanitizes failure notifications", async () => {
     h.notifications[0] ?? "",
     /payload|[\u001b\u0080-\u009f]/,
   );
+});
+
+test("post-edit independently bounds the command and output in failure notifications", async () => {
+  const h = harness("tui", "x".repeat(500));
+  await h.emit("session_start");
+  await h.emit("tool_result", { toolName: "write", isError: false });
+  await h.emit("agent_settled");
+  h.executions[0]?.result.resolve({
+    stdout: "",
+    stderr: "y".repeat(1_000),
+    code: 127,
+    killed: false,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const notice = h.notifications[0] ?? "";
+  assert.match(notice, /exit 127/);
+  assert.match(notice, /x+…/);
+  assert.match(notice, /y+…/);
+  assert.ok([...notice].length < 600, "notification must stay compact");
+  assert.doesNotMatch(notice, /x{200}|y{400}/);
+});
+
+test("post-edit bounds execution errors before notifying", async () => {
+  const h = harness();
+  await h.emit("session_start");
+  await h.emit("tool_result", { toolName: "write", isError: false });
+  await h.emit("agent_settled");
+  h.executions[0]?.result.reject(new Error("z".repeat(1_000)));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const notice = h.notifications[0] ?? "";
+  assert.match(notice, /could not run/);
+  assert.match(notice, /z+…/);
+  assert.ok([...notice].length < 400, "execution error must stay compact");
+  assert.doesNotMatch(notice, /z{400}/);
 });
 
 test("post-edit aborts an in-flight command on session shutdown", async () => {

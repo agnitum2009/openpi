@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { after } from "node:test";
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -17,12 +20,34 @@ import {
   buildSetupSuccessText,
   shouldOfferPiIntercom,
 } from "./domain.ts";
-import setupExtension, { CONFIGURE_MY_PI_SETUP_TOOL_NAME } from "./index.ts";
+
+const setupAgentDir = mkdtempSync(join(tmpdir(), "openpi-setup-index-"));
+process.env.PI_CODING_AGENT_DIR = setupAgentDir;
+
+const { default: setupExtension, CONFIGURE_MY_PI_SETUP_TOOL_NAME } =
+  await import("./index.ts");
+const { SETUP_CONFIG_PATH, loadSetupConfig } = await import(
+  "../shared/setup-config.ts"
+);
+
+after(() => rmSync(setupAgentDir, { recursive: true, force: true }));
 
 type Handler = (
   event: Record<string, unknown>,
   ctx: ExtensionContext,
 ) => unknown;
+
+interface CapturedSetupTool {
+  readonly name: string;
+  readonly parameters: unknown;
+  readonly execute: (
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal: AbortSignal,
+    onUpdate: (update: unknown) => void,
+    ctx: ExtensionContext,
+  ) => Promise<unknown>;
+}
 
 function visibilityHarness(
   options: {
@@ -35,7 +60,7 @@ function visibilityHarness(
     string,
     { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }
   >();
-  const tools = new Map<string, { name: string; parameters: unknown }>();
+  const tools = new Map<string, CapturedSetupTool>();
   const handlers = new Map<string, Handler[]>();
   let activeTools = [
     ...(options.initialActive ?? ["read", "bash", "edit", "write"]),
@@ -61,7 +86,7 @@ function visibilityHarness(
     ) {
       commands.set(name, command);
     },
-    registerTool(tool: { name: string; parameters: unknown }) {
+    registerTool(tool: CapturedSetupTool) {
       tools.set(tool.name, tool);
       // Pi refreshTools() adds newly registered names to the active set.
       if (!activeTools.includes(tool.name)) {
@@ -160,12 +185,44 @@ test("registers the canonical setup command, legacy alias, and one constrained t
   assert.equal("suggestions_enabled" in parameters.properties, true);
   assert.equal("suggestion_model" in parameters.properties, true);
   assert.equal("capability_discovery" in parameters.properties, true);
+  const postEdit = parameters.properties.post_edit_command as {
+    description?: string;
+  };
+  assert.match(postEdit.description ?? "", /only when.*explicitly asks/i);
+  assert.match(postEdit.description ?? "", /omit to preserve/i);
   assert.equal(
     Object.keys(parameters.properties).some((name) =>
       name.startsWith("summary"),
     ),
     false,
   );
+});
+
+test("post-edit stays off or preserved unless the setup request changes it", async () => {
+  rmSync(SETUP_CONFIG_PATH, { force: true });
+  const h = visibilityHarness();
+  const tool = h.tools.get(CONFIGURE_MY_PI_SETUP_TOOL_NAME);
+  assert.ok(tool);
+  const apply = (params: Record<string, unknown>) =>
+    tool.execute(
+      "setup-call",
+      params,
+      new AbortController().signal,
+      () => {},
+      h.ctx,
+    );
+
+  await apply({ ui_show_header: true });
+  assert.equal(loadSetupConfig().postEdit.command, "");
+
+  await apply({ post_edit_command: "  npm run format  " });
+  assert.equal(loadSetupConfig().postEdit.command, "npm run format");
+
+  await apply({ workflow_concurrency: 4 });
+  assert.equal(loadSetupConfig().postEdit.command, "npm run format");
+
+  await apply({ post_edit_command: "" });
+  assert.equal(loadSetupConfig().postEdit.command, "");
 });
 
 test("session_start hides configure_my_pi_setup after registration refresh", async () => {

@@ -274,7 +274,7 @@ export default function openPiSetup(pi: ExtensionAPI) {
         Type.String({
           maxLength: POST_EDIT_COMMAND_MAX_CHARS,
           description:
-            "Shell command run after turns with Write/Edit (empty string disables).",
+            'A single shell command (maximum 500 characters) to run in the background after a turn with successful Write/Edit operations, e.g. "npm run format". Set a non-empty command only when the current user\'s /openpi-setup request explicitly asks to configure Post-edit; do not infer one while changing another setting. Runs once per changed turn, not per edit, and only in an interactive TUI session. Set to an empty string to turn it off. Omit to preserve the current value.',
         }),
       ),
       extension_load_group: Type.Optional(

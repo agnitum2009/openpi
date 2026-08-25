@@ -20,6 +20,15 @@ import {
 } from "../shared/setup-config.ts";
 import { sanitizeTerminalText } from "../shared/terminal-text.ts";
 
+const NOTICE_COMMAND_MAX_CHARS = 160;
+const NOTICE_DETAIL_MAX_CHARS = 320;
+
+function boundedNoticeText(value: string, maxChars: number) {
+  const chars = [...sanitizeTerminalText(value).trim()];
+  if (chars.length <= maxChars) return chars.join("");
+  return `${chars.slice(0, maxChars - 1).join("")}…`;
+}
+
 export default function postEdit(
   pi: ExtensionAPI,
   loadCommand: () => string = () => loadSetupConfig().postEdit.command,
@@ -71,18 +80,20 @@ export default function postEdit(
       })
       .then((result) => {
         if (result.code === 0) return;
-        const detail = sanitizeTerminalText(
+        const commandPreview = boundedNoticeText(ran, NOTICE_COMMAND_MAX_CHARS);
+        const detail = boundedNoticeText(
           result.stderr || result.stdout || "",
-        )
-          .trim()
-          .slice(0, 500);
+          NOTICE_DETAIL_MAX_CHARS,
+        );
         warn(
-          `post-edit command failed (exit ${result.code}): ${sanitizeTerminalText(ran)}${detail ? `\n${detail}` : ""}`,
+          `post-edit command failed (exit ${result.code}): ${commandPreview}${detail ? `\n${detail}` : ""}`,
         );
       })
       .catch((error: unknown) => {
         const detail = error instanceof Error ? error.message : String(error);
-        warn(`post-edit command could not run: ${detail}`);
+        warn(
+          `post-edit command could not run: ${boundedNoticeText(detail, NOTICE_DETAIL_MAX_CHARS)}`,
+        );
       })
       .finally(() => {
         if (active?.controller === controller) active = undefined;
