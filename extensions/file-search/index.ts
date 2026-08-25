@@ -42,7 +42,10 @@ import {
   type PlatformTarget,
   type ResolvedBinary,
 } from "./src/binaries.ts";
-import { formatCapturedOutput, type CapturedOutput } from "../shared/output-capture.ts";
+import {
+  formatCapturedOutput,
+  type CapturedOutput,
+} from "../shared/output-capture.ts";
 import {
   FD_PARAMETER_DESCRIPTIONS,
   FD_PROMPT_GUIDELINES,
