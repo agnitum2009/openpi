@@ -216,6 +216,43 @@ function fileIdentity(path: string, stats: BigIntStats): PreviewFileIdentity {
   };
 }
 
+function previewFileChangedError(path: string) {
+  return new Error(`Session file changed while preview was loading: ${path}`);
+}
+
+function samePreviewFileIdentity(left: BigIntStats, right: BigIntStats) {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs
+  );
+}
+
+async function finalizePreviewFileIdentity(
+  path: string,
+  handle: FileHandle,
+  before: BigIntStats,
+) {
+  let after: BigIntStats;
+  let currentPath: BigIntStats;
+  try {
+    [after, currentPath] = await Promise.all([
+      handle.stat({ bigint: true }),
+      stat(path, { bigint: true }),
+    ]);
+  } catch {
+    throw previewFileChangedError(path);
+  }
+  if (
+    !samePreviewFileIdentity(before, after) ||
+    !samePreviewFileIdentity(after, currentPath)
+  ) {
+    throw previewFileChangedError(path);
+  }
+  return fileIdentity(path, currentPath);
+}
+
 export async function readPreviewFileIdentity(path: string) {
   return fileIdentity(path, await stat(path, { bigint: true }));
 }
@@ -706,16 +743,11 @@ export async function loadSessionPreviewData(
         recordRead,
       );
       throwIfAborted(options.signal);
-      const after = await handle.stat({ bigint: true });
-      if (before.size !== after.size || before.mtimeNs !== after.mtimeNs) {
-        throw new Error(
-          `Session file changed while preview was loading: ${path}`,
-        );
-      }
+      const identity = await finalizePreviewFileIdentity(path, handle, before);
       return {
         ...legacy,
         bytesRead,
-        identity: fileIdentity(path, after),
+        identity,
       };
     }
     const postCompaction = createMessageSegment();
@@ -792,12 +824,7 @@ export async function loadSessionPreviewData(
     }
 
     throwIfAborted(options.signal);
-    const after = await handle.stat({ bigint: true });
-    if (before.size !== after.size || before.mtimeNs !== after.mtimeNs) {
-      throw new Error(
-        `Session file changed while preview was loading: ${path}`,
-      );
-    }
+    const identity = await finalizePreviewFileIdentity(path, handle, before);
 
     const orderedMessages = compactionMessages
       ? [
@@ -821,7 +848,7 @@ export async function loadSessionPreviewData(
       bytesRead,
       retainedBytes: retained.retainedBytes,
       truncatedBytes: retained.truncatedBytes,
-      identity: fileIdentity(path, after),
+      identity,
     };
   } finally {
     await handle.close();

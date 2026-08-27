@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, renameSync } from "node:fs";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -386,6 +386,38 @@ test("v2/v3 preview rejects an active lineage with a missing parent", async (t) 
     /active lineage references a missing parent/,
   );
 });
+
+for (const version of [1, 3]) {
+  test(`v${version} preview rejects an atomic replacement of the session path`, async (t) => {
+    const originalEntries =
+      version === 1
+        ? [header(1), legacyMessage("user", "original", 1)]
+        : [header(3), message("m1", null, "user", "original")];
+    const replacementEntries =
+      version === 1
+        ? [header(1), legacyMessage("user", "replaced", 1)]
+        : [header(3), message("m1", null, "user", "replaced")];
+    const fixture = await writeSession(originalEntries);
+    const replacementPath = join(fixture.directory, "replacement.jsonl");
+    await writeFile(
+      replacementPath,
+      `${replacementEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+    );
+    t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+
+    let replaced = false;
+    await assert.rejects(
+      loadSessionPreviewData(fixture.path, {
+        onRead: () => {
+          if (replaced) return;
+          replaced = true;
+          renameSync(replacementPath, fixture.path);
+        },
+      }),
+      /changed while preview was loading/,
+    );
+  });
+}
 
 test("preview rejects a physical JSONL line larger than 8 MiB", async (t) => {
   const fixture = await writeRawSession(
