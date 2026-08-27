@@ -279,6 +279,33 @@ function availableOwnedToolNames(
   );
 }
 
+/** Verify that one active tool is the definition owned by this OpenPI source. */
+export function isOwnedToolActive(
+  pi: ActiveToolSurface,
+  owner: OpenPiToolOwner,
+  name: string,
+) {
+  if (!ownedToolNames(owner).includes(name)) {
+    throw new Error(`${owner} does not own tool ${JSON.stringify(name)}.`);
+  }
+  return (
+    pi.getActiveTools().includes(name) &&
+    availableOwnedToolNames(pi, stateFor(pi), owner).has(name)
+  );
+}
+
+/** Verify that one registered tool is available from this OpenPI source. */
+export function isOwnedToolAvailable(
+  pi: ActiveToolSurface,
+  owner: OpenPiToolOwner,
+  name: string,
+) {
+  if (!ownedToolNames(owner).includes(name)) {
+    throw new Error(`${owner} does not own tool ${JSON.stringify(name)}.`);
+  }
+  return availableOwnedToolNames(pi, stateFor(pi), owner).has(name);
+}
+
 function projectedOwnerTools(
   pi: ActiveToolSurface,
   state: ToolSurfaceState,
