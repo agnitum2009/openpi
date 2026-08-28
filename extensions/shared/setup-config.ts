@@ -513,9 +513,9 @@ export function parseSetupConfig(value: unknown): MyPiSetupConfig {
 /** An empty or invalid value disables the post-edit command (the safe default). */
 function parsePostEditCommand(value: unknown) {
   if (!isRecord(value)) return "";
-  return typeof value.command === "string"
-    ? value.command.trim().slice(0, POST_EDIT_COMMAND_MAX_CHARS)
-    : "";
+  if (typeof value.command !== "string") return "";
+  const command = value.command.trim();
+  return command.length <= POST_EDIT_COMMAND_MAX_CHARS ? command : "";
 }
 
 export function hasSavedSetupConfig() {
@@ -989,7 +989,7 @@ export function formatSetupConfig(config = loadSetupConfig()) {
     `Subagent results: ${config.ui.subagentResultDisplay === "full" ? "full by default" : "compact status summary (Ctrl+O expands full output)"}`,
     `Bash operations: ${config.ui.bashToolDisplay === "full" ? "expanded by default" : "one-line activity summary (Ctrl+O restores native evidence)"}`,
     `Write/Edit operations: ${config.ui.fileMutationDisplay === "full" ? "expanded by default" : "one-line activity summary (Ctrl+O restores native evidence)"}`,
-    `Post-edit command: ${config.postEdit.command ? config.postEdit.command : "off"}`,
+    `Post-edit command: ${config.postEdit.command ? "configured" : "off"}`,
     `Agent role models (Subagents + Workflows): ${SUBAGENT_ROLE_NAMES.map((role) => `${role} ${config.subagents.roleModels[role] ? `${config.subagents.roleModels[role].provider}/${config.subagents.roleModels[role].model}` : "inherit"}`).join(" · ")}`,
   ].join("\n");
 }

@@ -23,6 +23,7 @@ const {
   DEFAULT_SETUP_CONFIG,
   FOOTER_PRESET_DEFINITIONS,
   formatSetupConfig,
+  POST_EDIT_COMMAND_MAX_CHARS,
   SETUP_CONFIG_PATH,
   loadSetupConfig,
   parseSetupConfig,
@@ -524,7 +525,7 @@ test("legacy model-free recaps are explicitly migrated to disabled suggestions",
   assert.deepEqual(stored.suggestions, { enabled: false });
 });
 
-test("the post-edit command is off by default, trimmed, and length-bounded", () => {
+test("the post-edit command is off by default, trimmed, and fails closed when oversized", () => {
   // Off by default: nothing executes until the user configures a command.
   assert.equal(DEFAULT_SETUP_CONFIG.postEdit.command, "");
 
@@ -538,9 +539,38 @@ test("the post-edit command is off by default, trimmed, and length-bounded", () 
   writeFileSync(SETUP_CONFIG_PATH, JSON.stringify({ postEdit: 42 }));
   assert.equal(loadSetupConfig().postEdit.command, "");
 
+  const maximumLengthCommand = "x".repeat(POST_EDIT_COMMAND_MAX_CHARS);
+  writeFileSync(
+    SETUP_CONFIG_PATH,
+    JSON.stringify({ postEdit: { command: maximumLengthCommand } }),
+  );
+  assert.equal(loadSetupConfig().postEdit.command, maximumLengthCommand);
+
+  writeFileSync(
+    SETUP_CONFIG_PATH,
+    JSON.stringify({
+      postEdit: { command: "x".repeat(POST_EDIT_COMMAND_MAX_CHARS + 1) },
+    }),
+  );
+  assert.equal(loadSetupConfig().postEdit.command, "");
+});
+
+test("an oversized stored post-edit command is rejected and reported", async () => {
   writeFileSync(
     SETUP_CONFIG_PATH,
     JSON.stringify({ postEdit: { command: "x".repeat(900) } }),
   );
-  assert.equal(loadSetupConfig().postEdit.command.length, 500);
+
+  const { config, replaced } = await updateSetupConfig((current) => current);
+
+  assert.equal(config.postEdit.command, "");
+  assert.deepEqual(replaced, ["postEdit.command"]);
+});
+
+test("setup status reports post-edit configuration without exposing the command", () => {
+  const command = "PRIVATE_TOKEN=secret npm run format";
+  const status = formatSetupConfig(parseSetupConfig({ postEdit: { command } }));
+
+  assert.match(status, /Post-edit command: configured/);
+  assert.doesNotMatch(status, new RegExp(command));
 });
