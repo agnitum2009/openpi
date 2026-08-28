@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { loadSessionPreviewData } from "./preview-loader.ts";
+import { loadSessionPreviewData } from "../../../extensions/sessions/preview-loader.ts";
 
 const timestamp = (offset: number) =>
   new Date(Date.UTC(2026, 0, 1, 0, 0, offset)).toISOString();

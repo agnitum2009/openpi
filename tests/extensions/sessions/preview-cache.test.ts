@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SessionPreview } from "./sessions.ts";
+import type { SessionPreview } from "../../../extensions/sessions/sessions.ts";
 import {
   createSessionPreviewCache,
   measureSessionPreviewBytes,
   previewCacheKey,
-} from "./preview-cache.ts";
+} from "../../../extensions/sessions/preview-cache.ts";
 
 const preview = (title: string): SessionPreview => ({
   title,
