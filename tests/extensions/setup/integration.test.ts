@@ -153,7 +153,7 @@ try {
     );
     assert.match(
       JSON.stringify(result.snapshots[1]?.messages),
-      /ended without a successful configure_my_pi_setup result/i,
+      /configuration writer is now hidden/i,
     );
     assert.ok(
       result.snapshots[2]?.tools?.some(

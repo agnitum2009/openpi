@@ -163,7 +163,7 @@ export function buildSetupSuccessText(
 }
 
 export function buildSetupNoopClosureText() {
-  return "This setup episode ended without a successful configure_my_pi_setup result, so no setup update was confirmed. The configuration writer is now hidden. Do not edit configuration files directly. Run /openpi-setup <request> to start a new setup episode for any later change.";
+  return "The configuration writer is now hidden. To make a configuration change, run /openpi-setup <request>.";
 }
 
 export const CONFIGURE_MY_PI_SETUP_TOOL_NAME = "configure_my_pi_setup";

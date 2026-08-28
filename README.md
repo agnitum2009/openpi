@@ -402,7 +402,7 @@ macOS/Linux arm64 与 x64 缺少二进制时，OpenPI 会从官方 Release 下�
 
 Footer 布局以 `footerLines` 作为唯一持久化格式。旧版 `footerItems` 会在读取时迁移，但迁移后的配置不保证能被旧版 OpenPI 正确解释，因此不承诺配置文件的降级兼容性。
 
-一次 `/openpi-setup` episode 最多成功写入一次；成功后配置工具立即隐藏。若本轮没有成功写入，Runtime 会追加一条可见、持久且进入后续模型上下文的关闭凭据，明确 writer 已隐藏且未确认配置更新。writer 只有在 OpenPI 能验证当前激活的是包自身定义时才可用；重复或来源不匹配会显式 fail closed，不会发布假的 setup-active 状态。若随后还要修改另一项，请重新执行 `/openpi-setup <自然语言请求>`，不要让模型重调已隐藏工具，也不要绕过入口直接编辑配置文件。
+一次 `/openpi-setup` episode 最多成功写入一次；成功后配置工具立即隐藏。若本轮没有成功写入，Runtime 会追加一条可见、持久且进入后续模型上下文的关闭凭据，明确 writer 已隐藏，后续修改必须重新执行 `/openpi-setup <自然语言请求>`。writer 只有在 OpenPI 能验证当前激活的是包自身定义时才可用；重复或来源不匹配会显式 fail closed，不会发布假的 setup-active 状态。不要让模型重调已隐藏工具，也不要绕过入口直接编辑配置文件。
 
 <details>
 <summary><strong>默认值</strong></summary>
