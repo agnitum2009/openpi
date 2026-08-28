@@ -67,16 +67,29 @@ function runnerHarness(options: {
   prompt?: () => Promise<void>;
   abort?: () => Promise<void>;
   shutdown?: () => Promise<void>;
+  onMessageRead?: () => void;
+  onContextUsage?: () => void;
 }) {
   const listeners = new Set<AgentSessionEventListener>();
-  const messages: AgentSession["messages"] = [];
+  const observedMessages = (value: AgentSession["messages"]) =>
+    new Proxy(value, {
+      get(target, property, receiver) {
+        if (typeof property === "string" && /^\d+$/.test(property)) {
+          options.onMessageRead?.();
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+  let messages = observedMessages([]);
   const firstDisposal = deferred<void>();
   let bindings = 0;
   let prompts = 0;
   let aborts = 0;
   let disposals = 0;
   const session = {
-    messages,
+    get messages() {
+      return messages;
+    },
     model: undefined,
     extensionRunner: {
       hasHandlers: () => options.shutdown !== undefined,
@@ -102,7 +115,10 @@ function runnerHarness(options: {
       disposals++;
       firstDisposal.resolve();
     },
-    getContextUsage: () => undefined,
+    getContextUsage: () => {
+      options.onContextUsage?.();
+      return undefined;
+    },
     getAllTools: () => [],
     getToolDefinition: () => undefined,
   } as unknown as AgentSession;
@@ -110,7 +126,12 @@ function runnerHarness(options: {
   return {
     factory,
     session,
-    messages,
+    get messages() {
+      return messages;
+    },
+    replaceMessages: (next: AgentSession["messages"]) => {
+      messages = observedMessages(next);
+    },
     emit: (event: AgentSessionEvent) => {
       for (const listener of listeners) listener(event);
     },
@@ -422,6 +443,240 @@ test("schema-less agents accept an empty assistant message_end", async () => {
   assert.equal(outcome.aborted, false);
   assert.equal(outcome.output, "");
   assert.equal(outcome.error, undefined);
+  assert.equal(harness.disposals(), 1);
+});
+
+test("runAgent projects a long tool loop without rescanning canonical history", async () => {
+  let messageReads = 0;
+  let contextUsageReads = 0;
+  let respond = () => {};
+  const harness = runnerHarness({
+    onMessageRead: () => messageReads++,
+    onContextUsage: () => contextUsageReads++,
+    prompt: async () => respond(),
+  });
+  respond = () => {
+    for (let index = 0; index < 50; index++) {
+      const toolCallId = `call-${index}`;
+      const assistant = {
+        ...assistantTextMessage(`cycle ${index}`),
+        content: [
+          { type: "text" as const, text: `cycle ${index}` },
+          {
+            type: "toolCall" as const,
+            id: toolCallId,
+            name: "read",
+            arguments: { path: `fixture-${index}.txt` },
+          },
+        ],
+        stopReason: "toolUse" as const,
+        timestamp: 1_000 + index * 2,
+      };
+      const result = {
+        role: "toolResult" as const,
+        toolCallId,
+        toolName: "read",
+        content: [{ type: "text" as const, text: `result ${index}` }],
+        isError: false,
+        timestamp: 1_001 + index * 2,
+      };
+      harness.messages.push(assistant);
+      harness.emit({ type: "message_end", message: assistant });
+      harness.emit({
+        type: "tool_execution_start",
+        toolCallId,
+        toolName: "read",
+        args: { path: `fixture-${index}.txt` },
+      });
+      harness.emit({
+        type: "tool_execution_end",
+        toolCallId,
+        toolName: "read",
+        result,
+        isError: false,
+      });
+      harness.messages.push(result);
+      harness.emit({ type: "message_end", message: result });
+    }
+    // Pi state is canonical even if a final projection event is missed.
+    harness.messages.push(assistantTextMessage("unannounced final state"));
+  };
+
+  const outcome = await runHarnessAgent(harness);
+
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.output, "unannounced final state");
+  assert.equal(outcome.usage.turns, 51);
+  assert.equal(
+    outcome.transcript.some(
+      (entry) => entry.role === "toolResult" && entry.text === "result 49",
+    ),
+    true,
+  );
+  assert.ok(
+    messageReads <= harness.messages.length * 4,
+    `${harness.messages.length} messages caused ${messageReads} canonical history reads`,
+  );
+  assert.ok(
+    messageReads >= harness.messages.length,
+    "terminal reconciliation must read every canonical message",
+  );
+  assert.equal(
+    contextUsageReads,
+    2,
+    "context occupancy should be sampled only at hydrate and final reconcile",
+  );
+});
+
+test("compaction rebuilds progress after Pi finishes mutating active messages", async () => {
+  let contextUsageReads = 0;
+  let respond = async () => {};
+  const progress: Array<
+    Parameters<NonNullable<Parameters<typeof runAgent>[0]["onProgress"]>>[0]
+  > = [];
+  const harness = runnerHarness({
+    onContextUsage: () => contextUsageReads++,
+    prompt: () => respond(),
+  });
+  respond = async () => {
+    const discarded = assistantTextMessage("discarded before compaction");
+    harness.messages.push(discarded);
+    harness.emit({ type: "message_end", message: discarded });
+
+    harness.emit({
+      type: "compaction_end",
+      reason: "threshold",
+      result: {
+        summary: "fixture summary",
+        firstKeptEntryId: "fixture-entry",
+        tokensBefore: 1_000,
+        estimatedTokensAfter: 100,
+      },
+      aborted: false,
+      willRetry: false,
+    });
+    // Pi emits first, then can synchronously finish mutating active state.
+    const retained = assistantTextMessage("retained summary context");
+    harness.replaceMessages([retained]);
+    await Promise.resolve();
+
+    const compacted = progress.at(-1);
+    assert.equal(compacted?.preview, "retained summary context");
+    assert.equal(
+      compacted?.transcript.some((entry) =>
+        entry.text.includes("discarded before compaction"),
+      ),
+      false,
+    );
+
+    const completed = assistantTextMessage("completed after compaction");
+    harness.messages.push(completed);
+    harness.emit({ type: "message_end", message: completed });
+  };
+
+  const outcome = await runHarnessAgent(harness, {
+    onProgress: (update) => progress.push(update),
+  });
+
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.output, "completed after compaction");
+  assert.equal(outcome.usage.turns, 2);
+  assert.equal(
+    outcome.transcript.some((entry) =>
+      entry.text.includes("discarded before compaction"),
+    ),
+    false,
+  );
+  assert.equal(contextUsageReads, 3);
+});
+
+test("a deferred compaction projection failure stays inside the child outcome", async () => {
+  let respond = () => Promise.resolve();
+  const harness = runnerHarness({ prompt: () => respond() });
+  respond = () => {
+    harness.emit({
+      type: "compaction_end",
+      reason: "threshold",
+      result: {
+        summary: "fixture summary",
+        firstKeptEntryId: "fixture-entry",
+        tokensBefore: 1_000,
+        estimatedTokensAfter: 100,
+      },
+      aborted: false,
+      willRetry: false,
+    });
+    harness.replaceMessages([assistantTextMessage("compacted")]);
+    return new Promise<void>(() => {});
+  };
+
+  const outcome = await settleWithin(
+    runHarnessAgent(harness, {
+      onProgress: () => {
+        throw new Error("progress writer failed");
+      },
+    }),
+  );
+
+  assert.equal(outcome.ok, false);
+  assert.match(
+    outcome.error ?? "",
+    /failed to reconcile agent progress.*progress writer failed/i,
+  );
+  assert.equal(harness.aborts(), 1);
+  assert.equal(harness.disposals(), 1);
+});
+
+test("a persistent reconciliation failure cannot bypass child cleanup", async () => {
+  let contextUsageReads = 0;
+  let respond = () => Promise.resolve();
+  const harness = runnerHarness({
+    prompt: () => respond(),
+    onContextUsage: () => {
+      contextUsageReads++;
+      if (contextUsageReads > 1) throw new Error("context accessor failed");
+    },
+  });
+  respond = () => {
+    harness.emit({
+      type: "compaction_end",
+      reason: "threshold",
+      result: {
+        summary: "fixture summary",
+        firstKeptEntryId: "fixture-entry",
+        tokensBefore: 1_000,
+        estimatedTokensAfter: 100,
+      },
+      aborted: false,
+      willRetry: false,
+    });
+    return new Promise<void>(() => {});
+  };
+
+  const outcome = await settleWithin(runHarnessAgent(harness));
+
+  assert.equal(outcome.ok, false);
+  assert.match(
+    outcome.error ?? "",
+    /failed to reconcile agent progress.*context accessor failed/i,
+  );
+  assert.equal(harness.aborts(), 1);
+  assert.equal(harness.disposals(), 1);
+});
+
+test("a startup projection hydration failure cannot leak the child session", async () => {
+  const harness = runnerHarness({
+    onContextUsage: () => {
+      throw new Error("startup context accessor failed");
+    },
+  });
+
+  const outcome = await settleWithin(runHarnessAgent(harness));
+
+  assert.equal(outcome.ok, false);
+  assert.match(outcome.error ?? "", /startup context accessor failed/i);
+  assert.equal(harness.prompts(), 0);
+  assert.equal(harness.aborts(), 1);
   assert.equal(harness.disposals(), 1);
 });
 

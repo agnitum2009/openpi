@@ -39,17 +39,19 @@ import {
   STRUCTURED_OUTPUT_TOOL_DESCRIPTION,
 } from "./prompt.ts";
 import {
+  AgentProgressProjection,
+  type ProgressAssistantMessage,
+  transcriptFromMessages,
+} from "./progress-projection.ts";
+import {
   createReplayFilesystemBoundary,
   type ReplayFilesystemBoundaryOptions,
 } from "./replay-safety.ts";
-import { safeStringify, truncateUtf8 } from "./serialization.ts";
+import { truncateUtf8 } from "./serialization.ts";
 import { bindWorkflowToolRenderer } from "./tool-renderer.ts";
 
 const AGENT_OUTPUT_MAX_BYTES = 64 * 1024;
 export const MODEL_PROGRESS_TIMEOUT_MS = 45_000;
-const TRANSCRIPT_ENTRY_MAX_BYTES = 16 * 1024;
-const TRANSCRIPT_TOTAL_MAX_BYTES = 256 * 1024;
-const TRANSCRIPT_MAX_ENTRIES = 200;
 
 export type WorkflowModel = NonNullable<ExtensionContext["model"]>;
 export type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
@@ -239,7 +241,9 @@ function makeStructuredOutputTool(
   });
 }
 
-type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
+type AssistantMessage = ProgressAssistantMessage;
+
+export { transcriptFromMessages };
 
 export interface AssistantSettlement {
   stopReason: AssistantMessage["stopReason"];
@@ -275,28 +279,6 @@ export function agentFailureMessage(
   return settlement?.errorMessage ?? promptErrorMessage ?? "Agent failed";
 }
 
-function finalOutput(messages: AgentMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.role !== "assistant") continue;
-    const text = msg.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("\n")
-      .trim();
-    if (text) return text;
-  }
-  return "";
-}
-
-function safeJson(value: unknown): string {
-  return safeStringify(value, {
-    maxBytes: TRANSCRIPT_ENTRY_MAX_BYTES,
-    maxDepth: 12,
-    maxNodes: 2_000,
-  });
-}
-
 /** Record lifecycle timings without inferring completion from message timestamps. */
 export function recordToolExecutionTiming(
   timings: Map<string, ToolExecutionTiming>,
@@ -319,133 +301,6 @@ export function recordToolExecutionTiming(
     finishedAt: observedAt,
     ...(durationMs === undefined ? {} : { durationMs }),
   });
-}
-
-function toolMetadata(
-  toolCallId: string,
-  timings: ReadonlyMap<string, ToolExecutionTiming>,
-) {
-  const timing = timings.get(toolCallId);
-  return {
-    toolCallId: truncateUtf8(toolCallId, 1024),
-    ...(timing?.startedAt === undefined ? {} : { startedAt: timing.startedAt }),
-    ...(timing?.finishedAt === undefined
-      ? {}
-      : { finishedAt: timing.finishedAt }),
-    ...(timing?.durationMs === undefined
-      ? {}
-      : { durationMs: timing.durationMs }),
-  };
-}
-
-/** Convert pi messages into a compact, serializable transcript for the UI. */
-export function transcriptFromMessages(
-  messages: AgentMessage[],
-  toolTimings: ReadonlyMap<string, ToolExecutionTiming> = new Map(),
-): TranscriptEntry[] {
-  const entries: TranscriptEntry[] = [];
-  for (const message of messages) {
-    if (message.role === "user") {
-      const text =
-        typeof message.content === "string"
-          ? message.content
-          : message.content
-              .map((part) =>
-                part.type === "text" ? part.text : `[image: ${part.mimeType}]`,
-              )
-              .join("\n");
-      if (text.trim()) {
-        entries.push({ role: "user", text, timestamp: message.timestamp });
-      }
-      continue;
-    }
-
-    if (message.role === "assistant") {
-      for (const part of message.content) {
-        if (part.type === "text" && part.text.trim()) {
-          entries.push({
-            role: "assistant",
-            text: part.text,
-            timestamp: message.timestamp,
-          });
-        } else if (part.type === "thinking" && part.thinking.trim()) {
-          entries.push({
-            role: "thinking",
-            text: part.thinking,
-            timestamp: message.timestamp,
-          });
-        } else if (part.type === "toolCall") {
-          entries.push({
-            role: "tool",
-            name: part.name,
-            text: safeJson(part.arguments),
-            timestamp: message.timestamp,
-            ...toolMetadata(part.id, toolTimings),
-          });
-        }
-      }
-      continue;
-    }
-
-    if (message.role !== "toolResult") continue;
-    const text = message.content
-      .map((part) =>
-        part.type === "text" ? part.text : `[image: ${part.mimeType}]`,
-      )
-      .join("\n");
-    entries.push({
-      role: "toolResult",
-      name: message.toolName,
-      text,
-      isError: message.isError,
-      timestamp: message.timestamp,
-      ...toolMetadata(message.toolCallId, toolTimings),
-    });
-  }
-  const selected =
-    entries.length <= TRANSCRIPT_MAX_ENTRIES
-      ? entries
-      : [entries[0], ...entries.slice(-(TRANSCRIPT_MAX_ENTRIES - 1))];
-  const bounded: TranscriptEntry[] = [];
-  let totalBytes = 0;
-  for (const entry of selected) {
-    const remaining = TRANSCRIPT_TOTAL_MAX_BYTES - totalBytes;
-    if (remaining <= 0) break;
-    const text = truncateUtf8(
-      entry.text,
-      Math.min(TRANSCRIPT_ENTRY_MAX_BYTES, remaining),
-    );
-    totalBytes += Buffer.byteLength(text, "utf8");
-    bounded.push({
-      ...entry,
-      text:
-        text === entry.text ? text : `${text}\n[transcript entry truncated]`,
-    });
-  }
-  if (bounded.length < entries.length) {
-    bounded.push({
-      role: "toolResult",
-      name: "transcript",
-      text: `[transcript truncated: retained ${bounded.length} of ${entries.length} entries]`,
-    });
-  }
-  return bounded;
-}
-
-function computeUsage(messages: AgentMessage[]): AgentUsage {
-  const usage = emptyUsage();
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-    usage.turns++;
-    const u = msg.usage;
-    if (!u) continue;
-    usage.input += u.input || 0;
-    usage.output += u.output || 0;
-    usage.cacheRead += u.cacheRead || 0;
-    usage.cacheWrite += u.cacheWrite || 0;
-    usage.cost += u.cost?.total || 0;
-  }
-  return usage;
 }
 
 function errorText(error: unknown): string {
@@ -581,12 +436,17 @@ export async function runAgent(
   let modelProgressTimeoutMessage: string | undefined;
   let abortOperation: Promise<unknown> | undefined;
   let rejectForAbort: ((error: Error) => void) | undefined;
+  let rejectForProjectionFailure: ((error: Error) => void) | undefined;
   const abortRace = new Promise<never>((_resolve, reject) => {
     rejectForAbort = reject;
+  });
+  const projectionFailureRace = new Promise<never>((_resolve, reject) => {
+    rejectForProjectionFailure = reject;
   });
   // The same promise covers startup and prompting. Keep it observed even when
   // a pre-aborted run returns before either race is installed.
   void abortRace.catch(() => {});
+  void projectionFailureRace.catch(() => {});
   const abortError = () =>
     options.signal?.reason instanceof Error
       ? options.signal.reason
@@ -711,8 +571,8 @@ export async function runAgent(
   let promptErrorMessage: string | undefined;
   const toolTimings = new Map<string, ToolExecutionTiming>();
 
-  const captureToolRenderData = () => {
-    for (const message of childSession.messages) {
+  const captureToolRenderData = (messages: readonly AgentMessage[]) => {
+    for (const message of messages) {
       if (message.role === "assistant") {
         for (const part of message.content) {
           if (part.type !== "toolCall") continue;
@@ -734,24 +594,27 @@ export async function runAgent(
     }
   };
 
-  const sync = () => {
-    // Operator reuse can restore earlier messages before this activation's
-    // event subscription starts. Rehydrate their native UI projection here.
-    captureToolRenderData();
-    const messages = childSession.messages;
-    usage = computeUsage(messages);
-
+  const refreshModel = (latestAssistant?: AssistantMessage) => {
     const sessionModel = childSession.model;
     modelId = sessionModel?.id ?? modelId;
     contextWindow = sessionModel?.contextWindow ?? contextWindow;
-    const context = childSession.getContextUsage();
-    if (
-      typeof context?.tokens === "number" &&
-      Number.isFinite(context.tokens) &&
-      context.tokens >= 0
-    ) {
-      usage.contextTokens = context.tokens;
+    if (!latestAssistant) return;
+    const responseMatchesSession =
+      !sessionModel ||
+      (latestAssistant.provider === sessionModel.provider &&
+        latestAssistant.model === sessionModel.id);
+    const reportedId = latestAssistant.responseModel ?? latestAssistant.model;
+    const reportedModel = responseMatchesSession
+      ? options.modelRegistry.find(latestAssistant.provider, reportedId)
+      : undefined;
+    if (reportedModel) {
+      modelId = reportedModel.id;
+      contextWindow = reportedModel.contextWindow;
     }
+  };
+
+  const sampleContextTokens = () => {
+    const context = childSession.getContextUsage();
     if (
       typeof context?.contextWindow === "number" &&
       Number.isFinite(context.contextWindow) &&
@@ -759,33 +622,72 @@ export async function runAgent(
     ) {
       contextWindow = context.contextWindow;
     }
-
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg.role !== "assistant") continue;
-      // Some gateways report a concrete fallback model. Prefer its registry
-      // metadata when available so capacity tracks the model that served the
-      // latest response rather than a hardcoded/configured guess.
-      const responseMatchesSession =
-        !sessionModel ||
-        (msg.provider === sessionModel.provider &&
-          msg.model === sessionModel.id);
-      const reportedId = msg.responseModel ?? msg.model;
-      const reportedModel = responseMatchesSession
-        ? options.modelRegistry.find(msg.provider, reportedId)
-        : undefined;
-      if (reportedModel) {
-        modelId = reportedModel.id;
-        contextWindow = reportedModel.contextWindow;
-      }
-      break;
+    if (
+      typeof context?.tokens === "number" &&
+      Number.isFinite(context.tokens) &&
+      context.tokens >= 0
+    ) {
+      return context.tokens;
     }
+    return context?.tokens === null ? null : undefined;
+  };
+
+  const projection = new AgentProgressProjection();
+  let lastProjection = projection.snapshot(toolTimings);
+
+  const snapshotProjection = () => {
+    const snapshot = projection.snapshot(toolTimings);
+    usage = snapshot.usage;
+    refreshModel(snapshot.latestAssistant);
+    lastProjection = snapshot;
+    return snapshot;
+  };
+
+  const reconcileProjection = () => {
+    projection.replace(childSession.messages, sampleContextTokens());
+    return snapshotProjection();
+  };
+
+  const emitProgress = () => {
+    const snapshot = snapshotProjection();
+    options.onProgress?.({
+      preview: snapshot.preview,
+      usage,
+      model: modelId,
+      contextWindow,
+      transcript: bindWorkflowToolRenderer(snapshot.transcript, toolRenderer),
+    });
   };
 
   let armModelProgress = () => {};
   let markModelProgress = () => {};
   let completeModelTurn = () => {};
   let cancelModelProgressWatchdog = () => {};
+  let compactionReconcileQueued = false;
+  const queueCompactionReconcile = () => {
+    if (compactionReconcileQueued) return;
+    compactionReconcileQueued = true;
+    queueMicrotask(() => {
+      compactionReconcileQueued = false;
+      if (settled) return;
+      // Pi may synchronously remove a restored overflow assistant immediately
+      // after compaction_end. Read canonical state after that mutation.
+      try {
+        reconcileProjection();
+        emitProgress();
+      } catch (error) {
+        promptErrorMessage ??= `Failed to reconcile agent progress after compaction: ${errorText(error)}`;
+        rejectForProjectionFailure?.(new Error(promptErrorMessage));
+        try {
+          abortOperation ??= childSession.abort();
+          void abortOperation.catch(() => {});
+        } catch {
+          // The projection failure remains authoritative; bounded cleanup gets
+          // another chance to abort and dispose the child below.
+        }
+      }
+    });
+  };
   const unsubscribe = childSession.subscribe((event) => {
     if (settled) return;
     if (event.type === "turn_start") armModelProgress();
@@ -820,36 +722,34 @@ export async function runAgent(
         assistantSettlement,
         event.message,
       );
+      // Pi publishes the finalized message before tool lifecycle delivery.
+      // Hydrate native rendering from this one message without reading history.
+      captureToolRenderData([event.message]);
+      projection.append(event.message);
     }
     if (
       event.type === "tool_execution_start" ||
       event.type === "tool_execution_end"
     ) {
       recordToolExecutionTiming(toolTimings, event);
-    } else if (
-      event.type !== "message_end" &&
-      event.type !== "compaction_end"
-    ) {
+    } else if (event.type === "compaction_end") {
+      queueCompactionReconcile();
+      return;
+    } else if (event.type !== "message_end") {
       return;
     }
-    sync();
-    const progressTranscript = bindWorkflowToolRenderer(
-      transcriptFromMessages(childSession.messages, toolTimings),
-      toolRenderer,
-    );
-    options.onProgress?.({
-      preview: finalOutput(childSession.messages),
-      usage,
-      model: modelId,
-      contextWindow,
-      transcript: progressTranscript,
-    });
+    emitProgress();
   });
 
   let output = "";
   let transcript: TranscriptEntry[] = [];
   let cleanupErrors: string[] = [];
   try {
+    // Operator reuse may restore messages before this activation subscribes.
+    // Hydrate both bounded projections once; ordinary progress never rescans it.
+    projection.replace(childSession.messages, sampleContextTokens());
+    captureToolRenderData(childSession.messages);
+    snapshotProjection();
     if (!aborted) {
       const watchdog = createModelProgressWatchdog(
         (error) => {
@@ -878,25 +778,38 @@ export async function runAgent(
           childSession.prompt(buildWorkflowAgentPrompt(options.prompt)),
         ),
         abortRace,
+        projectionFailureRace,
       ]);
     }
   } catch (error) {
-    promptErrorMessage = errorText(error);
+    promptErrorMessage ??= errorText(error);
   } finally {
     cancelModelProgressWatchdog();
     options.signal?.removeEventListener("abort", onAbort);
     settled = true;
     unsubscribe();
     unsubscribeToolGuards?.();
-    sync();
-    output = truncateUtf8(
-      finalOutput(childSession.messages),
-      AGENT_OUTPUT_MAX_BYTES,
-    );
-    transcript = bindWorkflowToolRenderer(
-      transcriptFromMessages(childSession.messages, toolTimings),
-      toolRenderer,
-    );
+    try {
+      const finalProjection = reconcileProjection();
+      output = truncateUtf8(finalProjection.preview, AGENT_OUTPUT_MAX_BYTES);
+      transcript = bindWorkflowToolRenderer(
+        finalProjection.transcript,
+        toolRenderer,
+      );
+    } catch (error) {
+      promptErrorMessage ??= `Failed to reconcile final agent progress: ${errorText(error)}`;
+      // A broken canonical accessor must not prevent owned-session cleanup.
+      // Preserve the last projection that was fully observed instead.
+      try {
+        output = truncateUtf8(lastProjection.preview, AGENT_OUTPUT_MAX_BYTES);
+        transcript = bindWorkflowToolRenderer(
+          lastProjection.transcript,
+          toolRenderer,
+        );
+      } catch (fallbackError) {
+        promptErrorMessage += `; failed to render last progress: ${errorText(fallbackError)}`;
+      }
+    }
     const cleanup = await shutdownAndDisposeChildSession(childSession, {
       abort: aborted || promptErrorMessage !== undefined,
       abortOperation,
