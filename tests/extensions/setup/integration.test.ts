@@ -155,6 +155,14 @@ try {
       JSON.stringify(result.snapshots[1]?.messages),
       /configuration writer is now hidden/i,
     );
+    assert.match(
+      JSON.stringify(result.snapshots[1]?.messages),
+      /no configuration update was confirmed/i,
+    );
+    assert.match(
+      JSON.stringify(result.snapshots[1]?.messages),
+      /do not edit configuration files directly/i,
+    );
     assert.ok(
       result.snapshots[2]?.tools?.some(
         ({ name }) => name === "configure_my_pi_setup",

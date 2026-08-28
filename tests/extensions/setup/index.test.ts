@@ -382,8 +382,10 @@ test("successful setup result closes the episode and names the only re-entry", (
 test("no-op setup result records the bounded re-entry contract", () => {
   const result = buildSetupNoopClosureText();
 
+  assert.match(result, /no configuration update was confirmed/i);
   assert.match(result, /now hidden/i);
   assert.match(result, /\/openpi-setup <request>/);
+  assert.match(result, /do not edit configuration files directly/i);
 });
 
 test("keep-without-apply hides after the setup agent run settles", async () => {
