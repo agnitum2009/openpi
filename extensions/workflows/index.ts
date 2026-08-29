@@ -48,7 +48,10 @@ import {
   truncateToWidth,
 } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
-import { formatActivityStatus } from "../shared/activity-status.ts";
+import {
+  createStatusWriter,
+  formatActivityStatus,
+} from "../shared/activity-status.ts";
 import { waitBounded } from "../shared/child-session.ts";
 import { contextPercent } from "../shared/context-utilization.ts";
 import {
@@ -145,6 +148,7 @@ import {
 import {
   WorkflowNavigationEditor,
   type WorkflowStripEntry,
+  workflowStripEntryKey,
   WorkflowStripState,
   WorkflowStripWidget,
 } from "./navigation.ts";
@@ -803,6 +807,7 @@ export default function workflows(pi: ExtensionAPI) {
       enable: OPENPI_TOOL_SURFACE.workflows.entry,
     });
   const stripState = new WorkflowStripState();
+  const statusWriter = createStatusWriter("workflows");
   const widgetKey = "workflow-navigation";
 
   /**
@@ -859,6 +864,7 @@ export default function workflows(pi: ExtensionAPI) {
   let completedRuns = 0;
   let failedRuns = 0;
   let widgetVisible = false;
+  let widgetEntryKey: string | undefined;
   let requestWidgetRender: (() => void) | undefined;
   let navigationLayerRegistered = false;
   let dashboardOpen = false;
@@ -895,10 +901,19 @@ export default function workflows(pi: ExtensionAPI) {
   const updateWorkflowWidget = () => {
     const ctx = lastContext;
     if (!ctx || ctx.mode !== "tui") return;
-    const visible = Boolean(stripEntry());
-    if (visible === widgetVisible) return;
+    const entry = stripEntry();
+    const visible = Boolean(entry);
+    const entryKey = workflowStripEntryKey(entry);
+    if (visible === widgetVisible) {
+      if (visible && entryKey !== widgetEntryKey) {
+        widgetEntryKey = entryKey;
+        requestWidgetRender?.();
+      }
+      return;
+    }
     if (!visible) {
       stripState.focused = false;
+      widgetEntryKey = undefined;
       requestWidgetRender = undefined;
       ctx.ui.setWidget(widgetKey, undefined);
       widgetVisible = false;
@@ -913,6 +928,7 @@ export default function workflows(pi: ExtensionAPI) {
       { placement: "belowEditor" },
     );
     widgetVisible = true;
+    widgetEntryKey = entryKey;
   };
 
   const updateIndicator = () => {
@@ -920,18 +936,16 @@ export default function workflows(pi: ExtensionAPI) {
     if (!ctx) return;
     try {
       const running = activeRuns.size;
-      if (running === 0 && completedRuns === 0 && failedRuns === 0) {
-        ctx.ui.setStatus("workflows", undefined);
-      } else {
-        ctx.ui.setStatus(
-          "workflows",
-          formatActivityStatus(ctx.ui.theme, "workflows", {
-            running,
-            done: completedRuns,
-            failed: failedRuns,
-          }),
-        );
-      }
+      statusWriter.write(
+        ctx.ui,
+        running === 0 && completedRuns === 0 && failedRuns === 0
+          ? undefined
+          : formatActivityStatus(ctx.ui.theme, "workflows", {
+              running,
+              done: completedRuns,
+              failed: failedRuns,
+            }),
+      );
       updateWorkflowWidget();
     } catch {
       // UI may be unavailable.
@@ -1074,8 +1088,10 @@ export default function workflows(pi: ExtensionAPI) {
     } catch {
       // UI may already be disposed.
     }
+    statusWriter.reset();
     lastContext = undefined;
     widgetVisible = false;
+    widgetEntryKey = undefined;
     requestWidgetRender = undefined;
     stripState.focused = false;
   });
