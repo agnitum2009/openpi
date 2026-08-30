@@ -721,6 +721,7 @@ export class WorkflowDashboard {
   private startedSince: number;
   private close: () => void;
   private onAbort?: (runId: string) => boolean;
+  private initialToolsExpanded: boolean;
 
   constructor(
     tui: TUI,
@@ -733,6 +734,7 @@ export class WorkflowDashboard {
     close: () => void,
     initialRunId?: string,
     onAbort?: (runId: string) => boolean,
+    initialToolsExpanded = false,
   ) {
     this.tui = tui;
     this.theme = theme;
@@ -743,6 +745,7 @@ export class WorkflowDashboard {
     this.startedSince = startedSince;
     this.close = close;
     this.onAbort = onAbort;
+    this.initialToolsExpanded = initialToolsExpanded;
     this.refresh();
     if (initialRunId) {
       const resolution = resolveWorkflowRunTarget(
@@ -1040,6 +1043,7 @@ export class WorkflowDashboard {
           this.tui.requestRender();
         },
       },
+      { toolsExpanded: this.initialToolsExpanded },
     );
     this.tui.requestRender();
   }
@@ -1425,6 +1429,7 @@ export async function showWorkflowDashboard(
         },
         initialRunId,
         onAbort,
+        ctx.ui.getToolsExpanded(),
       );
       return dashboard;
     },
