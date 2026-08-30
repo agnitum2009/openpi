@@ -328,7 +328,7 @@ acceptance: {
 
 Workflow 在清理隔离 checkout 前原子保存有界 Handoff Manifest：tracked binary patch、stat、branch/HEAD、untracked/ignored 清单与 cleanup receipt。状态不明就保留现场，不自动 merge、apply 或强删。
 
-设计细节见 [`docs/design/WORKFLOW_INVOCATION_GRAPH.md`](docs/design/WORKFLOW_INVOCATION_GRAPH.md)。
+设计细节见 [Workflow invocation graph](https://github.com/openpi-dev/openpi/blob/main/docs/design/WORKFLOW_INVOCATION_GRAPH.md)。
 
 ---
 
@@ -651,7 +651,7 @@ bun run test
 
 npm 仍用于发布包的 `pack` / clean-install 验证，因为用户通过 npm Registry 安装 OpenPI。
 
-测试覆盖进程树终止与竞态、Subagent 生命周期与工具边界、Workflow Sandbox / Ledger / Graph / Replay / Acceptance、Worktree 数据保全、Session 状态恢复、配置迁移和 TUI 渲染。设计记录见 [`docs/design/`](docs/design/)，问题请提交到 [GitHub Issues](https://github.com/openpi-dev/openpi/issues)。
+测试覆盖进程树终止与竞态、Subagent 生命周期与工具边界、Workflow Sandbox / Ledger / Graph / Replay / Acceptance、Worktree 数据保全、Session 状态恢复、配置迁移和 TUI 渲染。设计记录见 [docs/design/](https://github.com/openpi-dev/openpi/tree/main/docs/design/)，问题请提交到 [GitHub Issues](https://github.com/openpi-dev/openpi/issues)。
 
 ---
 
