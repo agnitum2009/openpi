@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import {
   type AgentToolResult,
   type ExtensionAPI,
@@ -97,6 +98,97 @@ function captureRenderers() {
   assert.ok(message);
   return { workflow, message };
 }
+
+test("workflow launch schema recommends wait while preserving only the published alias", () => {
+  const { workflow } = captureRenderers();
+  const parameters = workflow.parameters as unknown as {
+    properties?: Record<string, unknown>;
+    additionalProperties?: boolean;
+  };
+
+  assert.ok(parameters.properties?.wait);
+  assert.deepEqual(
+    (parameters.properties?.background as { deprecated?: unknown })?.deprecated,
+    true,
+  );
+  assert.equal(parameters.additionalProperties, false);
+
+  const toolCall = (args: Record<string, unknown>) => ({
+    type: "toolCall" as const,
+    id: "call-schema",
+    name: "workflow",
+    arguments: args,
+  });
+  const script = "return 1;";
+
+  assert.deepEqual(
+    validateToolArguments(workflow, toolCall({ script, wait: false })),
+    { script, wait: false },
+  );
+  assert.deepEqual(
+    validateToolArguments(workflow, toolCall({ script, background: true })),
+    { script, background: true },
+  );
+  assert.throws(
+    () => validateToolArguments(workflow, toolCall({ script, detached: true })),
+    /Validation failed.*detached/s,
+  );
+});
+
+test("workflow call rendering labels an explicit inline wait", () => {
+  const { workflow } = captureRenderers();
+  assert.ok(workflow.renderCall);
+  const args = {
+    script: 'export const meta = { name: "inline" }; return 1;',
+    wait: true,
+  };
+
+  const component = workflow.renderCall(args, theme, {
+    args,
+    toolCallId: "call-inline-wait",
+    invalidate() {},
+    lastComponent: undefined,
+    state: {},
+    cwd: process.cwd(),
+    executionStarted: true,
+    argsComplete: true,
+    isPartial: false,
+    expanded: false,
+    showImages: false,
+    isError: false,
+  });
+
+  assert.match(component.render(100).join("\n"), /workflow inline \(wait\)/);
+});
+
+test("workflow call rendering gives legacy callers an actionable migration", () => {
+  const { workflow } = captureRenderers();
+  assert.ok(workflow.renderCall);
+  const args = {
+    script: 'export const meta = { name: "legacy" }; return 1;',
+    background: true,
+  };
+
+  const component = workflow.renderCall(args, theme, {
+    args,
+    toolCallId: "call-legacy-background",
+    invalidate() {},
+    lastComponent: undefined,
+    state: {},
+    cwd: process.cwd(),
+    executionStarted: true,
+    argsComplete: true,
+    isPartial: false,
+    expanded: false,
+    showImages: false,
+    isError: false,
+  });
+
+  assert.match(
+    component.render(100).join("\n"),
+    /workflow legacy \(deprecated: use wait: false\)/,
+  );
+});
 
 test("workflow tool errors with malformed details fall back to plain text", (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 0 });

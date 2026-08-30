@@ -18,15 +18,15 @@ export const WORKFLOW_PARAMETER_DESCRIPTIONS = {
     "JavaScript workflow script. May start with `export const meta = {...}`, then use phase(), agent(), parallel(), args, and a final `return`.",
   args: "Optional JSON string exposed to the script as `args` (parsed when valid JSON, otherwise passed through as the raw string).",
   background:
-    "Deprecated compatibility alias: true means wait=false; false means wait=true. Do not provide both background and wait.",
+    "Deprecated compatibility alias for published callers only; new calls must use wait. Replace true with wait=false and false with wait=true. Do not provide both fields. The alias will be removed in the next announced breaking release.",
   wait: "Wait for the final result in this tool call. Interactive sessions default to false and deliver completion later; print/automation defaults to true. Interrupting the wait does not cancel the workflow.",
   resumeFromRunId:
     "Optional prior run id or unique suffix for safe read-only replay. See the workflows Skill for matching rules.",
 };
 
-/** Describes stopping a running background workflow, mirroring subagent_cancel/bg_kill. */
+/** Describes stopping a running workflow, mirroring subagent_cancel/bg_kill. */
 export const WORKFLOW_STOP_TOOL_DESCRIPTION =
-  "Cancel a running background workflow by its run id (from the workflow launch result). This aborts its remaining agents and settles the run; partial results and artifacts are preserved. Only background runs need this — a blocking workflow is already cancelled by interrupting the turn.";
+  "Cancel a running workflow by its run id (from the workflow launch result). This aborts its remaining agents and settles the run; partial results and artifacts are preserved.";
 
 /** Model-facing schema description for the workflow run id to stop. */
 export const WORKFLOW_STOP_PARAMETER_DESCRIPTIONS = {
